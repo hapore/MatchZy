@@ -227,6 +227,44 @@ namespace MatchZy
             }
         }
 
+        /// <summary>
+        /// Starts (or restarts) the player-wait timeout system for the current map.
+        /// Safe to call on first map load AND on each subsequent map in a BO3/BO5 series.
+        /// Does nothing if no player list is defined in the match config or timeout is disabled.
+        /// </summary>
+        private void StartPlayerWaitSystem()
+        {
+            int expectedCount = GetExpectedMatchPlayersCount();
+            if (expectedCount == 0 || matchConfig.PlayerWaitTimeout <= 0)
+            {
+                Log($"[StartPlayerWaitSystem] Skipping: expectedCount={expectedCount}, timeout={matchConfig.PlayerWaitTimeout}");
+                return;
+            }
+
+            // Kill any leftover timers (e.g. from a previous map in the series)
+            playerWaitTimeoutTimer?.Kill();
+            playerWaitTimeoutTimer = null;
+            matchCountdownTimer?.Kill();
+            matchCountdownTimer = null;
+
+            isWaitingForPlayers = true;
+            int waitTimeout = matchConfig.PlayerWaitTimeout;
+            int mapNumber = matchConfig.CurrentMapNumber;
+
+            Log($"[StartPlayerWaitSystem] Map {mapNumber}: waiting up to {waitTimeout}s for {expectedCount} player(s).");
+
+            playerWaitTimeoutTimer = AddTimer(waitTimeout, () =>
+            {
+                if (!matchStarted && isWaitingForPlayers)
+                {
+                    Log($"[PlayerWaitTimeout] Map {mapNumber}: {waitTimeout}s reached. Not all players connected. Cancelling match.");
+                    PrintToAllChat($"{ChatColors.Red}Tiempo de espera agotado.{ChatColors.Default} No todos los jugadores se conectaron. La partida ha sido cancelada.");
+                    isWaitingForPlayers = false;
+                    ResetMatch();
+                }
+            });
+        }
+
         private void StartWarmup()
         {
             unreadyPlayerMessageTimer?.Kill();
@@ -345,9 +383,13 @@ namespace MatchZy
             unreadyPlayerMessageTimer?.Kill();
             sideSelectionMessageTimer?.Kill();
             pausedStateTimer?.Kill();
+            playerWaitTimeoutTimer?.Kill();
+            matchCountdownTimer?.Kill();
             unreadyPlayerMessageTimer = null;
             sideSelectionMessageTimer = null;
             pausedStateTimer = null;
+            playerWaitTimeoutTimer = null;
+            matchCountdownTimer = null;
         }
 
         private (int alivePlayers, int totalHealth) GetAlivePlayers(int team)
@@ -400,6 +442,13 @@ namespace MatchZy
 
                 isRoundRestorePending = false;
                 playerHasTakenDamage = false;
+
+                // Reset player-wait / countdown state
+                isWaitingForPlayers = false;
+                playerWaitTimeoutTimer?.Kill();
+                playerWaitTimeoutTimer = null;
+                matchCountdownTimer?.Kill();
+                matchCountdownTimer = null;
 
                 // Unready all players
                 foreach (var key in playerReadyStatus.Keys)
@@ -555,6 +604,83 @@ namespace MatchZy
             }
         }
 
+        /// <summary>Returns the total number of players declared in the match config (team1 + team2).</summary>
+        public int GetExpectedMatchPlayersCount()
+        {
+            int count = 0;
+            if (matchzyTeam1.teamPlayers is Newtonsoft.Json.Linq.JObject t1 && t1 != null)
+                count += t1.Count;
+            if (matchzyTeam2.teamPlayers is Newtonsoft.Json.Linq.JObject t2 && t2 != null)
+                count += t2.Count;
+            return count;
+        }
+
+        /// <summary>Returns how many config-listed players (team1 or team2) are currently connected.</summary>
+        public int GetConnectedMatchPlayers()
+        {
+            int count = 0;
+            foreach (var key in playerData.Keys)
+            {
+                if (!playerData[key].IsValid) continue;
+                CsTeam team = GetPlayerTeam(playerData[key]);
+                if (team == CsTeam.CounterTerrorist || team == CsTeam.Terrorist)
+                    count++;
+            }
+            return count;
+        }
+
+        /// <summary>Returns "team1" / "team2" / "" depending on which config team the player belongs to.</summary>
+        public string GetPlayerMatchTeamName(CCSPlayerController player)
+        {
+            string steamId = player.SteamID.ToString();
+            try
+            {
+                if (matchzyTeam1.teamPlayers != null && matchzyTeam1.teamPlayers[steamId] != null)
+                    return "team1";
+                if (matchzyTeam2.teamPlayers != null && matchzyTeam2.teamPlayers[steamId] != null)
+                    return "team2";
+            }
+            catch { }
+            return "";
+        }
+
+        /// <summary>Shows a countdown in chat and then calls HandleMatchStart() when it reaches zero.</summary>
+        private void StartMatchCountdown()
+        {
+            if (matchCountdownTimer != null) return; // already running
+
+            int expected = GetExpectedMatchPlayersCount();
+
+            // Notify webhook that all expected players are now connected
+            var allConnectedEvent = new MatchZyAllPlayersConnectedEvent
+            {
+                MatchId       = liveMatchId,
+                ExpectedCount = expected,
+            };
+            Task.Run(async () => await SendEventAsync(allConnectedEvent));
+
+            int seconds = matchConfig.MatchStartCountdown > 0 ? matchConfig.MatchStartCountdown : 10;
+            PrintToAllChat($"¡Todos los jugadores conectados! La partida inicia en {ChatColors.Green}{seconds}{ChatColors.Default} segundos...");
+
+            matchCountdownTimer = AddTimer(1.0f, () =>
+            {
+                seconds--;
+                if (seconds > 0 && seconds <= 5)
+                {
+                    PrintToAllChat($"La partida inicia en {ChatColors.Green}{seconds}{ChatColors.Default}...");
+                }
+                else if (seconds <= 0)
+                {
+                    matchCountdownTimer?.Kill();
+                    matchCountdownTimer = null;
+                    isWaitingForPlayers = false;
+                    playerWaitTimeoutTimer?.Kill();
+                    playerWaitTimeoutTimer = null;
+                    HandleMatchStart();
+                }
+            }, CounterStrikeSharp.API.Modules.Timers.TimerFlags.REPEAT);
+        }
+
         public void DetermineKnifeWinner()
         {
             // Knife Round code referred from Get5, thanks to the Get5 team for their amazing job!
@@ -691,7 +817,18 @@ namespace MatchZy
             {
                 if (IsTeamsReady() && IsSpectatorsReady())
                 {
-                    liveRequired = true;
+                    // When match is loaded from a config, wait until ALL expected players are connected
+                    int expected = GetExpectedMatchPlayersCount();
+                    int connected = GetConnectedMatchPlayers();
+                    Log($"[CheckLiveRequired] isMatchSetup=true, expected={expected}, connected={connected}");
+                    if (expected > 0 && connected < expected)
+                    {
+                        // Still waiting — do not start yet
+                        return;
+                    }
+                    // All connected (or no player list defined) → start countdown
+                    StartMatchCountdown();
+                    return;
                 }
             }
             else if (minimumReadyRequired == 0)
@@ -958,8 +1095,11 @@ namespace MatchZy
                 isMatchLive = false;
                 isPractice = false;
                 isDryRun = false;
+                isWaitingForPlayers = false; // reset before restarting
                 StartWarmup();
                 SetMapSides();
+                // BO3/BO5: restart the player-wait system for each new map
+                StartPlayerWaitSystem();
             });
         }
 
@@ -1175,9 +1315,11 @@ namespace MatchZy
                 PrintToPlayerChat(player, Localizer["matchzy.pause.techpausenotenabled"]);
                 return;
             }
-            if(!string.IsNullOrEmpty(techPausePermission.Value) && techPausePermission.Value != "\"\"")
+            // Strip surrounding quotes that CSS may inject when config.cfg has: matchzy_tech_pause_flag ""
+            string techPauseFlag = techPausePermission.Value.Trim().Trim('"').Trim();
+            if (!string.IsNullOrEmpty(techPauseFlag))
             {
-                if (!IsPlayerAdmin(player, "css_pause", techPausePermission.Value))
+                if (!IsPlayerAdmin(player, "css_pause", techPauseFlag))
                 {
                     SendPlayerNotAdminMessage(player);
                     return;

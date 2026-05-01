@@ -362,6 +362,10 @@ namespace MatchZy
 
             isMatchSetup = true;
 
+            // Start player-wait system: cancel match if not all players connect in time.
+            // StartPlayerWaitSystem() is also called from HandleMatchEnd for BO3/BO5 map transitions.
+            StartPlayerWaitSystem();
+
             if(matchConfig.SkipVeto) SetMapSides();
 
             SetTeamNames();
@@ -485,7 +489,14 @@ namespace MatchZy
             {
                 matchConfig.MapBanOrder = jsonDataObject["veto_mode"]!.ToObject<List<string>>()!;
             }
-            
+            if (jsonDataObject["player_wait_timeout"] != null)
+            {
+                matchConfig.PlayerWaitTimeout = jsonDataObject["player_wait_timeout"]!.Value<int>();
+            }
+            if (jsonDataObject["match_start_countdown"] != null)
+            {
+                matchConfig.MatchStartCountdown = jsonDataObject["match_start_countdown"]!.Value<int>();
+            }
         }
 
         public void HandleTeamNameChangeCommand(CCSPlayerController? player, string teamName, int teamNum) {

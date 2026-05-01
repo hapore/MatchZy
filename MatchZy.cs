@@ -68,6 +68,11 @@ namespace MatchZy
         // Configurable using matchzy_chat_messages_timer_delay <seconds>
         public int chatTimerDelay = 13;
 
+        // Player wait / countdown system (used when match is loaded via URL)
+        public bool isWaitingForPlayers = false;
+        public CounterStrikeSharp.API.Modules.Timers.Timer? playerWaitTimeoutTimer = null;
+        public CounterStrikeSharp.API.Modules.Timers.Timer? matchCountdownTimer = null;
+
         // Game Config
         public bool isKnifeRequired = true;
         public int minimumReadyRequired = 2; // Number of ready players required start the match. If set to 0, all connected players have to ready-up to start the match.

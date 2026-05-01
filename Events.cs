@@ -236,3 +236,31 @@ public class MatchZyDemoUploadedEvent : MatchZyMatchEvent
     {
     }
 }
+
+public class MatchZyPlayerConnectedEvent : MatchZyMatchEvent
+{
+    [JsonPropertyName("player_steamid")]
+    public required string PlayerSteamId { get; init; }
+
+    [JsonPropertyName("player_name")]
+    public required string PlayerName { get; init; }
+
+    [JsonPropertyName("team")]
+    public required string Team { get; init; }
+
+    [JsonPropertyName("connected_count")]
+    public required int ConnectedCount { get; init; }
+
+    [JsonPropertyName("expected_count")]
+    public required int ExpectedCount { get; init; }
+
+    public MatchZyPlayerConnectedEvent() : base("player_connected") { }
+}
+
+public class MatchZyAllPlayersConnectedEvent : MatchZyMatchEvent
+{
+    [JsonPropertyName("expected_count")]
+    public required int ExpectedCount { get; init; }
+
+    public MatchZyAllPlayersConnectedEvent() : base("all_players_connected") { }
+}

@@ -72,5 +72,19 @@ namespace MatchZy
 
         [JsonPropertyName("remote_log_header_value")]
         public string RemoteLogHeaderValue { get; set; } = "";
+
+        /// <summary>
+        /// Seconds to wait for all players in the config to connect before cancelling the match.
+        /// Default: 300 (5 minutes). Set to 0 to disable the timeout.
+        /// </summary>
+        [JsonPropertyName("player_wait_timeout")]
+        public int PlayerWaitTimeout { get; set; } = 300;
+
+        /// <summary>
+        /// Seconds of countdown shown in chat before the match starts once all players are connected.
+        /// Default: 10.
+        /// </summary>
+        [JsonPropertyName("match_start_countdown")]
+        public int MatchStartCountdown { get; set; } = 10;
     }
 }

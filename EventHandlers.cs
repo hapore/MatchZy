@@ -42,7 +42,46 @@ public partial class MatchZy
                 connectedPlayers++;
                 if (readyAvailable && !matchStarted)
                 {
-                    playerReadyStatus[player.UserId.Value] = false;
+                    // When a match config is loaded, auto-ready any player who belongs to team1 or team2
+                    if (isMatchSetup)
+                    {
+                        string matchTeam = GetPlayerMatchTeamName(player);
+                        if (!string.IsNullOrEmpty(matchTeam))
+                        {
+                            // Mark this player as ready automatically
+                            playerReadyStatus[player.UserId.Value] = true;
+
+                            int connected = GetConnectedMatchPlayers();
+                            int expected  = GetExpectedMatchPlayersCount();
+
+                            PrintToAllChat($"{ChatColors.Green}{player.PlayerName}{ChatColors.Default} se ha conectado. " +
+                                           $"Jugadores conectados: {ChatColors.Green}{connected}/{expected}{ChatColors.Default}");
+
+                            // Fire player_connected webhook event
+                            var connectEvent = new MatchZyPlayerConnectedEvent
+                            {
+                                MatchId      = liveMatchId,
+                                PlayerSteamId = player.SteamID.ToString(),
+                                PlayerName   = player.PlayerName,
+                                Team         = matchTeam,
+                                ConnectedCount = connected,
+                                ExpectedCount  = expected,
+                            };
+                            Task.Run(async () => await SendEventAsync(connectEvent));
+
+                            // Check if all players are now connected → may start countdown
+                            CheckLiveRequired();
+                        }
+                        else
+                        {
+                            // Spectator or admin spectating — keep unready until explicit .ready
+                            playerReadyStatus[player.UserId.Value] = false;
+                        }
+                    }
+                    else
+                    {
+                        playerReadyStatus[player.UserId.Value] = false;
+                    }
                 }
                 else
                 {
