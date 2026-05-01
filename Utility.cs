@@ -244,14 +244,33 @@ namespace MatchZy
             // Kill any leftover timers (e.g. from a previous map in the series)
             playerWaitTimeoutTimer?.Kill();
             playerWaitTimeoutTimer = null;
+            playerWaitReminderTimer?.Kill();
+            playerWaitReminderTimer = null;
             matchCountdownTimer?.Kill();
             matchCountdownTimer = null;
 
             isWaitingForPlayers = true;
             int waitTimeout = matchConfig.PlayerWaitTimeout;
             int mapNumber = matchConfig.CurrentMapNumber;
+            long capturedMatchId = liveMatchId;
+            DateTime waitStartedAt = DateTime.UtcNow;
 
             Log($"[StartPlayerWaitSystem] Map {mapNumber}: waiting up to {waitTimeout}s for {expectedCount} player(s).");
+
+            // Recordatorio periódico en chat con minutos restantes. Antes vivía
+            // en el backend (`matchPlayerCheck.ts`) usando RCON, ahora es nativo
+            // del plugin para evitar la race condition de timers paralelos.
+            playerWaitReminderTimer = AddTimer(60.0f, () =>
+            {
+                if (!isWaitingForPlayers || matchStarted) return;
+                int elapsedSec = (int)(DateTime.UtcNow - waitStartedAt).TotalSeconds;
+                int remainingSec = waitTimeout - elapsedSec;
+                if (remainingSec <= 0) return;
+                int remainingMin = (int)Math.Ceiling(remainingSec / 60.0);
+                if (remainingMin <= 0) return;
+                string word = remainingMin == 1 ? "minuto" : "minutos";
+                PrintToAllChat($"Quedan {ChatColors.Green}{remainingMin}{ChatColors.Default} {word} para que se conecten todos los jugadores...");
+            }, CounterStrikeSharp.API.Modules.Timers.TimerFlags.REPEAT);
 
             playerWaitTimeoutTimer = AddTimer(waitTimeout, () =>
             {
@@ -259,10 +278,59 @@ namespace MatchZy
                 {
                     Log($"[PlayerWaitTimeout] Map {mapNumber}: {waitTimeout}s reached. Not all players connected. Cancelling match.");
                     PrintToAllChat($"{ChatColors.Red}Tiempo de espera agotado.{ChatColors.Default} No todos los jugadores se conectaron. La partida ha sido cancelada.");
+
+                    // Calcular SteamIDs faltantes ANTES de resetear, para
+                    // poder reportarlos al backend.
+                    List<string> missing = GetMissingMatchPlayerSteamIds();
+
+                    // Notificar al backend que el plugin canceló la partida.
+                    // Esto reemplaza al watchdog que antes vivía en el backend.
+                    if (capturedMatchId > 0)
+                    {
+                        var cancelledEvent = new MatchCancelledEvent
+                        {
+                            MatchId = capturedMatchId,
+                            Reason = "players_not_connected",
+                            Missing = missing,
+                        };
+                        Task.Run(async () => await SendEventAsync(cancelledEvent));
+                    }
+
                     isWaitingForPlayers = false;
+                    playerWaitReminderTimer?.Kill();
+                    playerWaitReminderTimer = null;
                     ResetMatch();
                 }
             });
+        }
+
+        /// <summary>
+        /// Devuelve los SteamIDs declarados en el match config (team1+team2)
+        /// que aún no están conectados al servidor. Usado para reportar quién
+        /// faltó cuando el plugin cancela una partida por timeout.
+        /// </summary>
+        private List<string> GetMissingMatchPlayerSteamIds()
+        {
+            var connected = new HashSet<string>();
+            foreach (var key in playerData.Keys)
+            {
+                var p = playerData[key];
+                if (!p.IsValid || p.IsBot) continue;
+                connected.Add(p.SteamID.ToString());
+            }
+
+            var missing = new List<string>();
+            void Collect(Newtonsoft.Json.Linq.JToken? teamPlayers)
+            {
+                if (teamPlayers is not Newtonsoft.Json.Linq.JObject obj) return;
+                foreach (var prop in obj.Properties())
+                {
+                    if (!connected.Contains(prop.Name)) missing.Add(prop.Name);
+                }
+            }
+            Collect(matchzyTeam1.teamPlayers);
+            Collect(matchzyTeam2.teamPlayers);
+            return missing;
         }
 
         private void StartWarmup()
@@ -384,11 +452,13 @@ namespace MatchZy
             sideSelectionMessageTimer?.Kill();
             pausedStateTimer?.Kill();
             playerWaitTimeoutTimer?.Kill();
+            playerWaitReminderTimer?.Kill();
             matchCountdownTimer?.Kill();
             unreadyPlayerMessageTimer = null;
             sideSelectionMessageTimer = null;
             pausedStateTimer = null;
             playerWaitTimeoutTimer = null;
+            playerWaitReminderTimer = null;
             matchCountdownTimer = null;
         }
 
@@ -447,6 +517,8 @@ namespace MatchZy
                 isWaitingForPlayers = false;
                 playerWaitTimeoutTimer?.Kill();
                 playerWaitTimeoutTimer = null;
+                playerWaitReminderTimer?.Kill();
+                playerWaitReminderTimer = null;
                 matchCountdownTimer?.Kill();
                 matchCountdownTimer = null;
 
@@ -676,6 +748,8 @@ namespace MatchZy
                     isWaitingForPlayers = false;
                     playerWaitTimeoutTimer?.Kill();
                     playerWaitTimeoutTimer = null;
+                    playerWaitReminderTimer?.Kill();
+                    playerWaitReminderTimer = null;
                     HandleMatchStart();
                 }
             }, CounterStrikeSharp.API.Modules.Timers.TimerFlags.REPEAT);
@@ -1098,8 +1172,12 @@ namespace MatchZy
                 isWaitingForPlayers = false; // reset before restarting
                 StartWarmup();
                 SetMapSides();
-                // BO3/BO5: restart the player-wait system for each new map
-                StartPlayerWaitSystem();
+                // BO3/BO5: el watchdog de espera de jugadores se reinicia
+                // desde `OnMapStart` del mapa siguiente (junto al evento
+                // `map_warmup_started`). De esa forma el timeout empieza a
+                // contar cuando el mapa ya cargó de verdad y no durante el
+                // `changelevel`, que tarda 15-30 s y consumía parte del
+                // tiempo de espera real.
             });
         }
 

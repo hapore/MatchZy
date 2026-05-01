@@ -1,5 +1,16 @@
 # MatchZy Changelog
 
+# 0.8.16-hapore
+
+#### May 1, 2026
+
+- Added `map_warmup_started` event: emitted from `OnMapStart` once the next map of a series has loaded and warmup is active. Lets external services react to map transitions without polling/timers.
+- Added `match_cancelled` event: emitted when the plugin cancels a match by itself (e.g. `PlayerWaitTimeout` reached). Payload includes `reason` (`players_not_connected`) and `missing[]` (SteamIDs that never connected). Removes the need for an external watchdog.
+- `StartPlayerWaitSystem` now also runs an in-chat reminder timer that prints "Quedan N minutos para que se conecten todos los jugadores…" every 60 s while waiting (previously this had to be done over RCON from outside).
+- New helper `GetMissingMatchPlayerSteamIds()` to compute who from `team1`/`team2` config is not yet connected.
+- `KillPhaseTimers` / `ResetMatch` / countdown completion now also clean up the new `playerWaitReminderTimer`.
+- BO3/BO5 fix: the player-wait watchdog for series continuation maps is now (re)started from `OnMapStart` (alongside `map_warmup_started`) instead of from inside `HandleMatchEnd` before the `changelevel` runs. This prevents the 15-30 s `changelevel` window from eating into `PlayerWaitTimeout` and from spamming reminders during the map transition.
+
 # 0.8.15
 
 #### October 26, 2025

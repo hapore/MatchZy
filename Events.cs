@@ -145,6 +145,46 @@ public class GoingLiveEvent : MatchZyMapEvent
     }
 }
 
+/// <summary>
+/// Disparado cuando un mapa de la serie ha cargado y el warmup ya está
+/// activo (es decir, el `changelevel` se completó y la cfg de warmup se
+/// ejecutó). Útil para que servicios externos sepan exactamente cuándo es
+/// seguro empezar a chequear jugadores conectados o cualquier otra acción
+/// que dependa de tener el server en warmup del mapa correcto, evitando
+/// timers/race conditions del lado del backend.
+/// </summary>
+public class MapWarmupStartedEvent : MatchZyMapEvent
+{
+    public MapWarmupStartedEvent() : base("map_warmup_started")
+    {
+    }
+}
+
+/// <summary>
+/// Disparado cuando el plugin cancela la partida por su cuenta (timeout de
+/// espera de jugadores u otra causa interna). Permite que servicios externos
+/// (backend / UI) liberen el lobby sin tener que mantener su propio
+/// watchdog ni hacer polling RCON.
+/// </summary>
+public class MatchCancelledEvent : MatchZyMatchEvent
+{
+    /// <summary>
+    /// Razón por la que se canceló la partida. Códigos estables para que
+    /// el backend pueda reaccionar diferente según el caso.
+    /// Ej: "players_not_connected".
+    /// </summary>
+    [JsonPropertyName("reason")]
+    public required string Reason { get; init; }
+
+    /// <summary>SteamIDs que aún no se habían conectado al cancelar.</summary>
+    [JsonPropertyName("missing")]
+    public required List<string> Missing { get; init; }
+
+    public MatchCancelledEvent() : base("match_cancelled")
+    {
+    }
+}
+
 public class MatchZyRoundEndedEvent : MatchZyTimedRoundEvent
 {
 

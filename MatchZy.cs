@@ -72,6 +72,13 @@ namespace MatchZy
         public bool isWaitingForPlayers = false;
         public CounterStrikeSharp.API.Modules.Timers.Timer? playerWaitTimeoutTimer = null;
         public CounterStrikeSharp.API.Modules.Timers.Timer? matchCountdownTimer = null;
+        /// <summary>
+        /// Recordatorio periódico en chat ("Quedan N minutos para que se conecten…").
+        /// Se arranca junto con `playerWaitTimeoutTimer` y se mata cuando todos
+        /// se conectan (StartMatchCountdown), cuando se cancela (timeout) o en
+        /// cualquier reset (`KillPhaseTimers`/`ResetMatch`).
+        /// </summary>
+        public CounterStrikeSharp.API.Modules.Timers.Timer? playerWaitReminderTimer = null;
 
         // Game Config
         public bool isKnifeRequired = true;
@@ -326,6 +333,32 @@ namespace MatchZy
                     }
                     if (isWarmup) StartWarmup();
                     if (isPractice) StartPracticeMode();
+
+                    // Notifica a servicios externos que el warmup del mapa actual
+                    // ya está activo (post `changelevel` + cfg de warmup). Permite
+                    // a integraciones evitar timers/race conditions tipo "esperar X
+                    // segundos antes de chequear jugadores en BO3".
+                    if (isMatchSetup && isWarmup && liveMatchId > 0)
+                    {
+                        var warmupStartedEvent = new MapWarmupStartedEvent
+                        {
+                            MatchId = liveMatchId,
+                            MapNumber = matchConfig.CurrentMapNumber
+                        };
+                        Task.Run(async () => await SendEventAsync(warmupStartedEvent));
+
+                        // Reinicia el watchdog de espera de jugadores aquí, no
+                        // antes del `changelevel`. Así el timeout/reminder
+                        // empiezan a contar recién cuando el nuevo mapa ya
+                        // cargó y está en warmup (caso BO3/BO5 entre mapas).
+                        // Para el primer mapa esta llamada es idempotente: si
+                        // ya fue invocada desde `LoadMatchFromJSON`, simplemente
+                        // resetea el countdown.
+                        if (!matchStarted)
+                        {
+                            StartPlayerWaitSystem();
+                        }
+                    }
                 });
             });
 
