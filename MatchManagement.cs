@@ -129,6 +129,12 @@ namespace MatchZy
                         ReplyToUserCommand(player, Localizer["matchzy.mm.matchloadfailed"]);
                         ResetMatch();
                     }
+                    else
+                    {
+                        // Mark this match as URL-loaded so the auto-start countdown kicks in
+                        // when all expected players are connected.
+                        matchLoadedFromUrl = true;
+                    }
                     loadedConfigFile = url;
                 }
                 else
@@ -286,7 +292,9 @@ namespace MatchZy
                 MapsPool = maplist.ToObject<List<string>>()!,
                 MapsLeftInVetoPool = maplist.ToObject<List<string>>()!,
                 NumMaps = jsonDataObject["num_maps"]!.Value<int>(),
-                MinPlayersToReady = minimumReadyRequired
+                MinPlayersToReady = minimumReadyRequired,
+                PlayerWaitTimeout = playerWaitTimeoutCvar.Value,
+                MatchStartCountdown = matchStartCountdownCvar.Value
             };
 
             GetOptionalMatchValues(jsonDataObject);

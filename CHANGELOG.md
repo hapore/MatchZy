@@ -9,7 +9,7 @@
 - `StartPlayerWaitSystem` now also runs an in-chat reminder timer that prints "Quedan N minutos para que se conecten todos los jugadores…" every 60 s while waiting (previously this had to be done over RCON from outside).
 - New helper `GetMissingMatchPlayerSteamIds()` to compute who from `team1`/`team2` config is not yet connected.
 - `KillPhaseTimers` / `ResetMatch` / countdown completion now also clean up the new `playerWaitReminderTimer`.
-- BO3/BO5 fix: the player-wait watchdog for series continuation maps is now (re)started from `OnMapStart` (alongside `map_warmup_started`) instead of from inside `HandleMatchEnd` before the `changelevel` runs. This prevents the 15-30 s `changelevel` window from eating into `PlayerWaitTimeout` and from spamming reminders during the map transition.
+- BO3/BO5 fix: the player-wait watchdog for series continuation maps is now (re)started from `OnMapStart` (alongside `map_warmup_started`) instead of from inside `HandleMatchEnd` before the `changelevel` runs. This prevents the 15-30 s `changelevel` window from eating into `PlayerWaitTimeout` and from spamming reminders during the map transition. The re-arm only fires for `CurrentMapNumber > 0` to avoid double-initialising on the first map (which is owned by `LoadMatchFromJSON`) — observed to crash CS2 with a segfault in spawn-points when combined with the existing double `StartWarmup` in `OnMapStart`.
 
 # 0.8.15
 

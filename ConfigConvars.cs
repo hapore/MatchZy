@@ -30,6 +30,10 @@ namespace MatchZy
 
         public FakeConVar<string> matchStartMessage = new("matchzy_match_start_message", "Message to show when the match starts. Use $$$ to break message into multiple lines. Set to \"\" to disable.", "");
 
+        public FakeConVar<int> playerWaitTimeoutCvar = new("matchzy_player_wait_timeout", "Seconds to wait for all players to connect before cancelling a URL-loaded match. 0 disables. Default: 300", 300);
+        public FakeConVar<int> matchStartCountdownCvar = new("matchzy_match_start_countdown", "Seconds of countdown shown in chat once all expected players are connected (URL-loaded matches). Default: 10", 10);
+        public FakeConVar<int> playerWaitSecondsThresholdCvar = new("matchzy_player_wait_seconds_threshold", "When the remaining player-wait time is less than or equal to this value (seconds), reminder messages switch from once-per-minute to once-per-second. Default: 30", 30);
+
         [ConsoleCommand("matchzy_whitelist_enabled_default", "Whether Whitelist is enabled by default or not. Default value: false")]
         public void MatchZyWLConvar(CCSPlayerController? player, CommandInfo command)
         {

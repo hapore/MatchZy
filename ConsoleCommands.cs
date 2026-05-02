@@ -470,6 +470,25 @@ namespace MatchZy
                 {
                     // Server.PrintToChatAll($"{chatPrefix} An admin force-ended the match.");
                     PrintToAllChat(Localizer["matchzy.cc.endmatch"]);
+
+                    // Notificar al backend que la partida fue cancelada por admin.
+                    // Capturamos el matchId ANTES de ResetMatch() porque éste lo
+                    // limpia. El handler corre síncrono dentro del comando, así
+                    // que disparamos el HTTP en background con Task.Run.
+                    long cancelledMatchId = liveMatchId;
+                    string adminId = player?.SteamID.ToString() ?? "console";
+                    if (cancelledMatchId != 0)
+                    {
+                        var cancelledEvent = new MatchCancelledEvent
+                        {
+                            MatchId = cancelledMatchId,
+                            Reason = "admin_endmatch",
+                            Missing = new List<string>(),
+                        };
+                        Task.Run(async () => await SendEventAsync(cancelledEvent));
+                        Log($"[OnEndMatchCommand] Admin {adminId} cancelled match {cancelledMatchId} via css_endmatch.");
+                    }
+
                     ResetMatch();
                 }
                 else

@@ -99,7 +99,15 @@ public partial class MatchZy
                 {
                     Log($"[FULL CONNECT] First player has connected, starting warmup!");
                     ExecUnpracCommands();
-                    AutoStart();
+                    // Si ya hay un match cargado (por URL o config), el warmup
+                    // ya fue iniciado por LoadMatchFromJSON. Llamar AutoStart()
+                    // aquí con autoStartMode=0 dispara StartSleepMode() y
+                    // resetea readyAvailable/isWarmup, dejando la partida
+                    // muerta. Solo invocar AutoStart() si NO hay match setup.
+                    if (!isMatchSetup)
+                    {
+                        AutoStart();
+                    }
                 }
             }
             return HookResult.Continue;

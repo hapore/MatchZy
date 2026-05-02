@@ -33,6 +33,9 @@ namespace MatchZy
         public bool isSideSelectionPhase = false;
         public bool isMatchLive = false;
         public long liveMatchId = -1;
+        // True only when the current match was loaded via matchzy_loadmatch_url.
+        // Used to gate the auto-start countdown so it only runs for URL-loaded matches.
+        public bool matchLoadedFromUrl = false;
         public int autoStartMode = 1;
 
         public bool mapReloadRequired = false;
@@ -80,6 +83,45 @@ namespace MatchZy
         /// </summary>
         public CounterStrikeSharp.API.Modules.Timers.Timer? playerWaitReminderTimer = null;
 
+        /// <summary>
+        /// Generación monotónica del countdown actual. Cada vez que se inicia
+        /// un nuevo countdown se incrementa; los ticks one-shot ya encolados
+        /// con un id viejo se descartan silenciosamente. Esto reemplaza el
+        /// patrón de Timer.REPEAT + Kill() desde dentro del callback, que
+        /// estaba corrompiendo memoria del engine de CS2.
+        /// </summary>
+        public int countdownGeneration = 0;
+
+        /// <summary>True mientras hay un countdown activo (evita re-disparar StartMatchCountdown).</summary>
+        public bool isCountdownActive = false;
+
+        /// <summary>
+        /// UTC en que empezó el warmup actual (para forzar un mínimo de
+        /// estabilización del engine antes de pasar a live). El engine de CS2
+        /// crashea con SIGSEGV en `BeginMatch` si la transición live ocurre
+        /// demasiado rápido después del map load.
+        /// </summary>
+        public DateTime warmupStartedAt = DateTime.MinValue;
+
+        /// <summary>Segundos mínimos de warmup antes de poder pasar a live.</summary>
+        public const int MinWarmupSecondsBeforeLive = 15;
+
+        /// <summary>
+        /// Flag para evitar agendar múltiples diferidos de <c>CheckLiveRequired</c>
+        /// mientras el servidor termina de estabilizar el warmup. Sin esto, cada
+        /// EventPlayerConnectFull dispara un nuevo AddTimer + un PrintToAllChat
+        /// ("Estabilizando servidor...") generando spam visible para los jugadores.
+        /// </summary>
+        public bool liveDeferralScheduled = false;
+
+        /// <summary>
+        /// Generación del sistema de espera de jugadores. Cada vez que se
+        /// inicia (o se cancela) un wait, se incrementa, invalidando los ticks
+        /// del reminder one-shot que ya estuvieran en cola. Reemplaza el patrón
+        /// de Timer.REPEAT + Kill() que corrompía memoria del engine.
+        /// </summary>
+        public int playerWaitGeneration = 0;
+
         // Game Config
         public bool isKnifeRequired = true;
         public int minimumReadyRequired = 2; // Number of ready players required start the match. If set to 0, all connected players have to ready-up to start the match.
@@ -95,9 +137,10 @@ namespace MatchZy
 
         // SQLite/MySQL Database 
         private Database database = new();
-    
-        public override void Load(bool hotReload) {
-            
+
+        public override void Load(bool hotReload)
+        {
+
             LoadAdmins();
 
             database.InitializeDatabase(ModuleDirectory);
@@ -110,9 +153,12 @@ namespace MatchZy
             reverseTeamSides["CT"] = matchzyTeam1;
             reverseTeamSides["TERRORIST"] = matchzyTeam2;
 
-            if (!hotReload) {
+            if (!hotReload)
+            {
                 AutoStart();
-            } else {
+            }
+            else
+            {
                 // Pluign should not be reloaded while a match is live (this would messup with the match flags which were set)
                 // Only hot-reload the plugin if you are testing something and don't want to restart the server time and again.
                 UpdatePlayersMap();
@@ -225,17 +271,20 @@ namespace MatchZy
             RegisterEventHandler<EventRoundFreezeEnd>(EventRoundFreezeEndHandler);
             RegisterEventHandler<EventPlayerGivenC4>(EventPlayerGivenC4);
             RegisterEventHandler<EventPlayerDeath>(EventPlayerDeathPreHandler, hookMode: HookMode.Pre);
-            RegisterListener<Listeners.OnClientDisconnectPost>(playerSlot => { 
-               // May not be required, but just to be on safe side so that player data is properly updated in dictionaries
-               // Update: Commenting the below function as it was being called multiple times on map change.
+            RegisterListener<Listeners.OnClientDisconnectPost>(playerSlot =>
+            {
+                // May not be required, but just to be on safe side so that player data is properly updated in dictionaries
+                // Update: Commenting the below function as it was being called multiple times on map change.
                 // UpdatePlayersMap();
             });
             RegisterListener<Listeners.OnEntitySpawned>(OnEntitySpawnedHandler);
-            RegisterEventHandler<EventPlayerTeam>((@event, info) => {
+            RegisterEventHandler<EventPlayerTeam>((@event, info) =>
+            {
                 CCSPlayerController? player = @event.Userid;
                 if (!IsPlayerValid(player)) return HookResult.Continue;
 
-                if (matchzyTeam1.coach.Contains(player!) || matchzyTeam2.coach.Contains(player!)) {
+                if (matchzyTeam1.coach.Contains(player!) || matchzyTeam2.coach.Contains(player!))
+                {
                     @event.Silent = true;
                     return HookResult.Changed;
                 }
@@ -259,15 +308,28 @@ namespace MatchZy
 
                 SwitchPlayerTeam(player, playerTeam);
 
+                // Re-evaluar el auto-start: cuando un jugador acaba de ser
+                // movido a su equipo de la config, IsTeamReady() recién ahora
+                // puede contarlo. Si era el último que faltaba, esto dispara
+                // StartMatchCountdown(). Pequeño delay para que TeamNum se
+                // actualice en el servidor antes de chequear.
+                if (isMatchSetup && readyAvailable && !matchStarted)
+                {
+                    AddTimer(0.2f, () => CheckLiveRequired());
+                }
+
                 return HookResult.Continue;
             });
 
             AddCommandListener("jointeam", (player, info) =>
             {
-                if ((isMatchSetup || isVeto) && player != null && player.IsValid) {
-                    if (int.TryParse(info.ArgByIndex(1), out int joiningTeam)) {
+                if ((isMatchSetup || isVeto) && player != null && player.IsValid)
+                {
+                    if (int.TryParse(info.ArgByIndex(1), out int joiningTeam))
+                    {
                         int playerTeam = (int)GetPlayerTeam(player);
-                        if (joiningTeam != playerTeam) {
+                        if (joiningTeam != playerTeam)
+                        {
                             return HookResult.Stop;
                         }
                     }
@@ -277,16 +339,19 @@ namespace MatchZy
 
             AddCommandListener("noclip", OnConsoleNoClip); // Override noclip
 
-            RegisterEventHandler<EventRoundEnd>((@event, info) => 
+            RegisterEventHandler<EventRoundEnd>((@event, info) =>
             {
                 if (!isKnifeRound) return HookResult.Continue;
 
                 DetermineKnifeWinner();
                 @event.Winner = knifeWinner;
                 int finalEvent = 10;
-                if (knifeWinner == 3) {
+                if (knifeWinner == 3)
+                {
                     finalEvent = 8;
-                } else if (knifeWinner == 2) {
+                }
+                else if (knifeWinner == 2)
+                {
                     finalEvent = 9;
                 }
                 @event.Reason = finalEvent;
@@ -297,8 +362,9 @@ namespace MatchZy
                 return HookResult.Changed;
             }, HookMode.Pre);
 
-           RegisterEventHandler<EventRoundEnd>((@event, info) => {
-                try 
+            RegisterEventHandler<EventRoundEnd>((@event, info) =>
+            {
+                try
                 {
                     if (isDryRun)
                     {
@@ -324,8 +390,10 @@ namespace MatchZy
             //     return HookResult.Continue;
             // });
 
-            RegisterListener<Listeners.OnMapStart>(mapName => { 
-                AddTimer(1.0f, () => {
+            RegisterListener<Listeners.OnMapStart>(mapName =>
+            {
+                AddTimer(1.0f, () =>
+                {
                     if (!isMatchSetup)
                     {
                         AutoStart();
@@ -347,14 +415,15 @@ namespace MatchZy
                         };
                         Task.Run(async () => await SendEventAsync(warmupStartedEvent));
 
-                        // Reinicia el watchdog de espera de jugadores aquí, no
-                        // antes del `changelevel`. Así el timeout/reminder
-                        // empiezan a contar recién cuando el nuevo mapa ya
-                        // cargó y está en warmup (caso BO3/BO5 entre mapas).
-                        // Para el primer mapa esta llamada es idempotente: si
-                        // ya fue invocada desde `LoadMatchFromJSON`, simplemente
-                        // resetea el countdown.
-                        if (!matchStarted)
+                        // Reinicia el watchdog de espera de jugadores SOLO para
+                        // los mapas posteriores de una serie BO3/BO5
+                        // (CurrentMapNumber > 0). El primer mapa ya lo arranca
+                        // `LoadMatchFromJSON` y volver a llamarlo aquí provocaba
+                        // doble inicialización + doble exec de warmup.cfg al
+                        // mismo tiempo que la primera ronda de jugadores
+                        // conectaba, lo que llegaba a hacer crashear al server
+                        // CS2 (segfault en spawn points).
+                        if (!matchStarted && matchConfig.CurrentMapNumber > 0)
                         {
                             StartPlayerWaitSystem();
                         }
@@ -367,7 +436,8 @@ namespace MatchZy
             //     ResetMatch();
             // });
 
-            RegisterEventHandler<EventPlayerDeath>((@event, info) => {
+            RegisterEventHandler<EventPlayerDeath>((@event, info) =>
+            {
                 // Setting money back to 16000 when a player dies in warmup
                 var player = @event.Userid;
                 if (!isWarmup) return HookResult.Continue;
@@ -377,8 +447,8 @@ namespace MatchZy
             });
 
             RegisterEventHandler<EventPlayerHurt>((@event, info) =>
-			{
-				CCSPlayerController? attacker = @event.Attacker;
+            {
+                CCSPlayerController? attacker = @event.Attacker;
                 CCSPlayerController? victim = @event.Userid;
 
                 if (!IsPlayerValid(attacker) || !IsPlayerValid(victim)) return HookResult.Continue;
@@ -391,19 +461,20 @@ namespace MatchZy
                     return HookResult.Continue;
                 }
 
-				if (!attacker!.IsValid || attacker.IsBot && !(@event.DmgHealth > 0 || @event.DmgArmor > 0))
-					return HookResult.Continue;
-                if (matchStarted && victim!.TeamNum != attacker.TeamNum) 
+                if (!attacker!.IsValid || attacker.IsBot && !(@event.DmgHealth > 0 || @event.DmgArmor > 0))
+                    return HookResult.Continue;
+                if (matchStarted && victim!.TeamNum != attacker.TeamNum)
                 {
                     int targetId = (int)victim.UserId!;
                     UpdatePlayerDamageInfo(@event, targetId);
                     if (attacker != victim) playerHasTakenDamage = true;
                 }
 
-				return HookResult.Continue;
-			});
+                return HookResult.Continue;
+            });
 
-            RegisterEventHandler<EventPlayerChat>((@event, info) => {
+            RegisterEventHandler<EventPlayerChat>((@event, info) =>
+            {
 
                 int currentVersion = Api.GetVersion();
                 int index = @event.Userid + 1;
@@ -417,18 +488,21 @@ namespace MatchZy
                 var messageCommandArg = parts.Length > 1 ? string.Join(' ', parts.Skip(1)) : string.Empty;
 
                 CCSPlayerController? player = null;
-                if (playerData.TryGetValue(playerUserId, out CCSPlayerController? value)) {
+                if (playerData.TryGetValue(playerUserId, out CCSPlayerController? value))
+                {
                     player = value;
                 }
 
-                if (player == null) {
+                if (player == null)
+                {
                     // Somehow we did not had the player in playerData, hence updating the maps again before getting the player
                     UpdatePlayersMap();
                     player = playerData[playerUserId];
                 }
 
                 // Handling player commands
-                if (commandActions.ContainsKey(message)) {
+                if (commandActions.ContainsKey(message))
+                {
                     commandActions[message](player, null);
                 }
 

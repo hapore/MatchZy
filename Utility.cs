@@ -215,6 +215,11 @@ namespace MatchZy
         {
             var absolutePath = Path.Join(Server.GameDirectory + "/csgo/cfg", warmupCfgPath);
 
+            // Marca el momento en que arranca el warmup. CheckLiveRequired usa
+            // este timestamp para asegurar un mínimo de estabilización del
+            // engine antes de pasar a live (evita SIGSEGV en BeginMatch).
+            warmupStartedAt = DateTime.UtcNow;
+
             if (File.Exists(Path.Join(Server.GameDirectory + "/csgo/cfg", warmupCfgPath)))
             {
                 Log($"[StartWarmup] Starting warmup! Executing Warmup CFG from {warmupCfgPath}");
@@ -257,27 +262,28 @@ namespace MatchZy
 
             Log($"[StartPlayerWaitSystem] Map {mapNumber}: waiting up to {waitTimeout}s for {expectedCount} player(s).");
 
-            // Recordatorio periódico en chat con minutos restantes. Antes vivía
-            // en el backend (`matchPlayerCheck.ts`) usando RCON, ahora es nativo
-            // del plugin para evitar la race condition de timers paralelos.
-            playerWaitReminderTimer = AddTimer(60.0f, () =>
-            {
-                if (!isWaitingForPlayers || matchStarted) return;
-                int elapsedSec = (int)(DateTime.UtcNow - waitStartedAt).TotalSeconds;
-                int remainingSec = waitTimeout - elapsedSec;
-                if (remainingSec <= 0) return;
-                int remainingMin = (int)Math.Ceiling(remainingSec / 60.0);
-                if (remainingMin <= 0) return;
-                string word = remainingMin == 1 ? "minuto" : "minutos";
-                PrintToAllChat($"Quedan {ChatColors.Green}{remainingMin}{ChatColors.Default} {word} para que se conecten todos los jugadores...");
-            }, CounterStrikeSharp.API.Modules.Timers.TimerFlags.REPEAT);
+            // Recordatorio periódico en chat. Antes vivía en el backend
+            // (`matchPlayerCheck.ts`) usando RCON, ahora es nativo del plugin
+            // para evitar la race condition de timers paralelos.
+            //   • Mientras quedan > threshold: mensaje cada 60s con minutos restantes.
+            //   • Cuando quedan <= threshold (def. 30s): mensaje cada segundo con segundos restantes.
+            //
+            // NOTA IMPORTANTE: NO usamos Timer.REPEAT. Cada tick se reagenda a sí
+            // mismo con un AddTimer(1.0f) one-shot. Si la `playerWaitGeneration`
+            // cambió, los ticks pendientes se descartan silenciosamente. Esto
+            // evita tener que llamar Kill() sobre un Timer.REPEAT, lo que ya
+            // nos provocó SIGSEGV del engine en runs previos.
+            int secondsThreshold = playerWaitSecondsThresholdCvar.Value > 0 ? playerWaitSecondsThresholdCvar.Value : 30;
+            int waitId = ++playerWaitGeneration;
+            ScheduleWaitReminderTick(waitId, waitTimeout, secondsThreshold, waitStartedAt, lastPrintedSec: -1);
+            playerWaitReminderTimer = null; // ya no usamos un timer único
 
             playerWaitTimeoutTimer = AddTimer(waitTimeout, () =>
             {
                 if (!matchStarted && isWaitingForPlayers)
                 {
                     Log($"[PlayerWaitTimeout] Map {mapNumber}: {waitTimeout}s reached. Not all players connected. Cancelling match.");
-                    PrintToAllChat($"{ChatColors.Red}Tiempo de espera agotado.{ChatColors.Default} No todos los jugadores se conectaron. La partida ha sido cancelada.");
+                    PrintToAllChat(Localizer["matchzy.match.playerwaittimeout"]);
 
                     // Calcular SteamIDs faltantes ANTES de resetear, para
                     // poder reportarlos al backend.
@@ -297,9 +303,60 @@ namespace MatchZy
                     }
 
                     isWaitingForPlayers = false;
+                    playerWaitGeneration++; // descarta ticks one-shot pendientes
                     playerWaitReminderTimer?.Kill();
                     playerWaitReminderTimer = null;
                     ResetMatch();
+                }
+            });
+        }
+
+        /// <summary>
+        /// Encola UN tick one-shot del recordatorio de espera de jugadores. Cada
+        /// tick se reagenda a sí mismo. Si <c>playerWaitGeneration</c> cambió,
+        /// el tick se descarta silenciosamente \u2014 mecanismo de cancelación que
+        /// evita el patrón problemático de Timer.REPEAT + Kill().
+        /// </summary>
+        private void ScheduleWaitReminderTick(int waitId, int waitTimeout, int secondsThreshold, DateTime waitStartedAt, int lastPrintedSec)
+        {
+            AddTimer(1.0f, () =>
+            {
+                try
+                {
+                    if (waitId != playerWaitGeneration) return; // cancelado
+                    if (!isWaitingForPlayers || matchStarted) return;
+
+                    int elapsedSec = (int)(DateTime.UtcNow - waitStartedAt).TotalSeconds;
+                    int remainingSec = waitTimeout - elapsedSec;
+                    if (remainingSec <= 0)
+                    {
+                        // Se acabó el tiempo \u2014 el `playerWaitTimeoutTimer` (one-shot
+                        // independiente) se encarga de cancelar la partida.
+                        return;
+                    }
+
+                    int newLastPrinted = lastPrintedSec;
+                    if (remainingSec != lastPrintedSec)
+                    {
+                        if (remainingSec <= secondsThreshold)
+                        {
+                            PrintToAllChat(Localizer["matchzy.match.playerwaitseconds", remainingSec]);
+                            newLastPrinted = remainingSec;
+                        }
+                        else if (remainingSec % 60 == 0)
+                        {
+                            int remainingMin = remainingSec / 60;
+                            PrintToAllChat(Localizer["matchzy.match.playerwaitminutes", remainingMin]);
+                            newLastPrinted = remainingSec;
+                        }
+                    }
+
+                    // Reagendar próximo tick.
+                    ScheduleWaitReminderTick(waitId, waitTimeout, secondsThreshold, waitStartedAt, newLastPrinted);
+                }
+                catch (Exception ex)
+                {
+                    Log($"[WaitReminderTick FATAL] {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}");
                 }
             });
         }
@@ -407,20 +464,36 @@ namespace MatchZy
 
         private void SetupLiveFlagsAndCfg()
         {
+            Log("[SetupLiveFlagsAndCfg] ENTER -> SetLiveFlags");
             SetLiveFlags();
+            Log("[SetupLiveFlagsAndCfg] SetLiveFlags OK -> KillPhaseTimers");
             KillPhaseTimers();
+            Log("[SetupLiveFlagsAndCfg] KillPhaseTimers OK -> ExecLiveCFG");
             ExecLiveCFG();
+            Log("[SetupLiveFlagsAndCfg] ExecLiveCFG returned, scheduling 1s post-CFG timer");
             // Adding timer here to make sure that CFG execution is completed till then
             AddTimer(1, () =>
             {
-                HandlePlayoutConfig();
-                ExecuteChangedConvars();
+                try
+                {
+                    Log("[PostCFG +1s] HandlePlayoutConfig");
+                    HandlePlayoutConfig();
+                    Log("[PostCFG +1s] ExecuteChangedConvars");
+                    ExecuteChangedConvars();
+                    Log("[PostCFG +1s] done");
+                }
+                catch (Exception ex)
+                {
+                    Log($"[PostCFG FATAL] {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}");
+                }
             });
         }
 
         private void StartLive()
         {
+            Log("[StartLive] ENTER -> SetupLiveFlagsAndCfg");
             SetupLiveFlagsAndCfg();
+            Log("[StartLive] SetupLiveFlagsAndCfg OK -> StartDemoRecording");
             StartDemoRecording();
 
             // Storing 0-0 score backup file as lastBackupFileName, so that .stop functions properly in first round.
@@ -460,6 +533,11 @@ namespace MatchZy
             playerWaitTimeoutTimer = null;
             playerWaitReminderTimer = null;
             matchCountdownTimer = null;
+            // Cancela cualquier tick one-shot del countdown que esté en cola.
+            countdownGeneration++;
+            isCountdownActive = false;
+            // Cancela cualquier tick one-shot del wait reminder que esté en cola.
+            playerWaitGeneration++;
         }
 
         private (int alivePlayers, int totalHealth) GetAlivePlayers(int team)
@@ -512,6 +590,7 @@ namespace MatchZy
 
                 isRoundRestorePending = false;
                 playerHasTakenDamage = false;
+                matchLoadedFromUrl = false;
 
                 // Reset player-wait / countdown state
                 isWaitingForPlayers = false;
@@ -521,6 +600,9 @@ namespace MatchZy
                 playerWaitReminderTimer = null;
                 matchCountdownTimer?.Kill();
                 matchCountdownTimer = null;
+                countdownGeneration++; // descarta ticks pendientes del countdown
+                isCountdownActive = false;
+                playerWaitGeneration++; // descarta ticks pendientes del wait reminder
 
                 // Unready all players
                 foreach (var key in playerReadyStatus.Keys)
@@ -719,40 +801,116 @@ namespace MatchZy
         /// <summary>Shows a countdown in chat and then calls HandleMatchStart() when it reaches zero.</summary>
         private void StartMatchCountdown()
         {
-            if (matchCountdownTimer != null) return; // already running
+            if (isCountdownActive) return; // ya hay un countdown corriendo
+            isCountdownActive = true;
 
-            int expected = GetExpectedMatchPlayersCount();
-
-            // Notify webhook that all expected players are now connected
-            var allConnectedEvent = new MatchZyAllPlayersConnectedEvent
+            // IMPORTANTE: invocada típicamente desde dentro de un timer callback
+            // (AddTimer en EventPlayerTeam handler). Crear timers, hacer
+            // PrintToChatAll y disparar HTTP desde dentro de un timer callback
+            // ha provocado segfaults del engine de CS2 (exit 139). Saltamos al
+            // próximo frame del game loop para ejecutar en contexto limpio.
+            Server.NextFrame(() =>
             {
-                MatchId       = liveMatchId,
-                ExpectedCount = expected,
-            };
-            Task.Run(async () => await SendEventAsync(allConnectedEvent));
-
-            int seconds = matchConfig.MatchStartCountdown > 0 ? matchConfig.MatchStartCountdown : 10;
-            PrintToAllChat($"¡Todos los jugadores conectados! La partida inicia en {ChatColors.Green}{seconds}{ChatColors.Default} segundos...");
-
-            matchCountdownTimer = AddTimer(1.0f, () =>
-            {
-                seconds--;
-                if (seconds > 0 && seconds <= 5)
+                try
                 {
-                    PrintToAllChat($"La partida inicia en {ChatColors.Green}{seconds}{ChatColors.Default}...");
-                }
-                else if (seconds <= 0)
-                {
-                    matchCountdownTimer?.Kill();
-                    matchCountdownTimer = null;
+                    Log("[StartMatchCountdown] entering NextFrame body");
+
+                    // Apagar el sistema de espera AHORA (dentro de NextFrame, no
+                    // antes), así evitamos matar un Timer.REPEAT desde el callback
+                    // de otro timer — patrón que ya nos hizo crashear el engine.
+                    // Se invalida la generación para que cualquier tick del reminder
+                    // que ya esté en cola se descarte silenciosamente.
                     isWaitingForPlayers = false;
+                    playerWaitGeneration++;
                     playerWaitTimeoutTimer?.Kill();
                     playerWaitTimeoutTimer = null;
                     playerWaitReminderTimer?.Kill();
                     playerWaitReminderTimer = null;
-                    HandleMatchStart();
+                    int expected = GetExpectedMatchPlayersCount();
+                    Log($"[StartMatchCountdown] expected={expected}");
+
+                    var allConnectedEvent = new MatchZyAllPlayersConnectedEvent
+                    {
+                        MatchId = liveMatchId,
+                        ExpectedCount = expected,
+                    };
+                    Task.Run(async () => await SendEventAsync(allConnectedEvent));
+                    Log("[StartMatchCountdown] webhook dispatched");
+
+                    int totalSeconds = matchConfig.MatchStartCountdown > 0 ? matchConfig.MatchStartCountdown : 10;
+                    Log($"[StartMatchCountdown] seconds={totalSeconds}, about to PrintToAllChat");
+                    PrintToAllChat(Localizer["matchzy.match.allplayersconnected", totalSeconds]);
+
+                    // Token de cancelación: si cambia mientras el countdown corre, todos los
+                    // ticks pendientes se descartan silenciosamente. Esto reemplaza la lógica
+                    // anterior de Timer.REPEAT + Kill() desde dentro del callback, que estaba
+                    // corrompiendo memoria del engine y causando segfault.
+                    int countdownId = ++countdownGeneration;
+                    matchCountdownTimer = null; // ya no usamos un timer único
+                    Log($"[StartMatchCountdown] scheduling self-rescheduling ticks (id={countdownId})");
+                    ScheduleCountdownTick(totalSeconds, countdownId);
                 }
-            }, CounterStrikeSharp.API.Modules.Timers.TimerFlags.REPEAT);
+                catch (Exception ex)
+                {
+                    Log($"[StartMatchCountdown FATAL] {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}");
+                }
+            });
+        }
+
+        /// <summary>
+        /// Encola UN tick one-shot del countdown. Cuando se ejecuta, decrementa
+        /// y se reagenda a sí mismo (no usa Timer.REPEAT). Si la `countdownGeneration`
+        /// cambió, el tick se descarta — esto es nuestro mecanismo de cancelación,
+        /// y evita tener que llamar `Kill()` desde dentro del callback (que es lo
+        /// que corrompía memoria y producía el segfault).
+        /// </summary>
+        private void ScheduleCountdownTick(int remaining, int countdownId)
+        {
+            AddTimer(1.0f, () =>
+            {
+                try
+                {
+                    // Cancelado por otro StartMatchCountdown / ResetMatch / KillPhaseTimers.
+                    if (countdownId != countdownGeneration)
+                    {
+                        Log($"[CountdownTick] stale id={countdownId} (current={countdownGeneration}), discarding");
+                        return;
+                    }
+
+                    int seconds = remaining - 1;
+                    Log($"[CountdownTick] seconds={seconds} (id={countdownId})");
+
+                    if (seconds > 0)
+                    {
+                        if (seconds <= 5)
+                        {
+                            PrintToAllChat(Localizer["matchzy.match.countdown", seconds]);
+                        }
+                        // Reagendar próximo tick.
+                        ScheduleCountdownTick(seconds, countdownId);
+                        return;
+                    }
+
+                    // seconds == 0 → fin del countdown. Invalidar la generación
+                    // para que cualquier tick rezagado se descarte.
+                    countdownGeneration++;
+                    isCountdownActive = false;
+                    isWaitingForPlayers = false;
+                    PrintToAllChat(Localizer["matchzy.match.started"]);
+
+                    // Diferir HandleMatchStart: dejarle al engine un frame
+                    // limpio antes de cargar live.cfg / mp_restartgame.
+                    AddTimer(0.5f, () =>
+                    {
+                        try { HandleMatchStart(); }
+                        catch (Exception exH) { Log($"[HandleMatchStart FATAL] {exH.GetType().Name}: {exH.Message}\n{exH.StackTrace}"); }
+                    });
+                }
+                catch (Exception exT)
+                {
+                    Log($"[CountdownTick FATAL] {exT.GetType().Name}: {exT.Message}\n{exT.StackTrace}");
+                }
+            });
         }
 
         public void DetermineKnifeWinner()
@@ -900,8 +1058,51 @@ namespace MatchZy
                         // Still waiting — do not start yet
                         return;
                     }
-                    // All connected (or no player list defined) → start countdown
-                    StartMatchCountdown();
+                    // All connected (or no player list defined) → start countdown only when
+                    // the match was loaded via URL. For other setup paths (file/manual) keep
+                    // the legacy immediate start to avoid behavior changes.
+                    if (matchLoadedFromUrl)
+                    {
+                        // Garantizar un mínimo de tiempo de warmup antes del countdown.
+                        // Si pasamos a live demasiado rápido tras el map load, el engine
+                        // de CS2 crashea con SIGSEGV en el segundo BeginMatch (mp_restartgame
+                        // del live.cfg cae mientras la transición warmup→live aún no se
+                        // estabilizó). Diferimos el countdown hasta cumplir el mínimo.
+                        if (warmupStartedAt != DateTime.MinValue)
+                        {
+                            double elapsed = (DateTime.UtcNow - warmupStartedAt).TotalSeconds;
+                            if (elapsed < MinWarmupSecondsBeforeLive)
+                            {
+                                if (isCountdownActive)
+                                {
+                                    Log($"[CheckLiveRequired] countdown ya activo, no reagendar.");
+                                    return;
+                                }
+                                if (liveDeferralScheduled)
+                                {
+                                    // Ya hay un diferido en cola — no agendamos otro
+                                    // ni spammeamos chat. El que está corriendo va
+                                    // a re-llamar a CheckLiveRequired cuando expire.
+                                    return;
+                                }
+                                float wait = (float)(MinWarmupSecondsBeforeLive - elapsed);
+                                Log($"[CheckLiveRequired] Warmup solo lleva {elapsed:F1}s, difiriendo countdown {wait:F1}s más para evitar crash de engine.");
+                                liveDeferralScheduled = true;
+                                AddTimer(wait, () =>
+                                {
+                                    liveDeferralScheduled = false;
+                                    try { CheckLiveRequired(); }
+                                    catch (Exception ex) { Log($"[CheckLiveRequired-deferred FATAL] {ex.GetType().Name}: {ex.Message}"); }
+                                });
+                                return;
+                            }
+                        }
+                        StartMatchCountdown();
+                    }
+                    else
+                    {
+                        HandleMatchStart();
+                    }
                     return;
                 }
             }
@@ -924,6 +1125,7 @@ namespace MatchZy
 
         private void HandleMatchStart()
         {
+            Log("[HandleMatchStart] ENTER");
             isPractice = false;
             isDryRun = false;
             if (isRoundRestorePending)
@@ -944,7 +1146,8 @@ namespace MatchZy
                     if (playerData[key].TeamNum == 3)
                     {
                         matchzyTeam1.teamName = "team_" + RemoveSpecialCharacters(playerData[key].PlayerName.Replace(" ", "_"));
-                        foreach (var coach in matchzyTeam1.coach) {
+                        foreach (var coach in matchzyTeam1.coach)
+                        {
                             coach.Clan = $"[{matchzyTeam1.teamName} COACH]";
                         }
                         break;
@@ -963,7 +1166,8 @@ namespace MatchZy
                     if (playerData[key].TeamNum == 2)
                     {
                         matchzyTeam2.teamName = "team_" + RemoveSpecialCharacters(playerData[key].PlayerName.Replace(" ", "_"));
-                        foreach (var coach in matchzyTeam2.coach) {
+                        foreach (var coach in matchzyTeam2.coach)
+                        {
                             coach.Clan = $"[{matchzyTeam2.teamName} COACH]";
                         }
                         break;
@@ -972,16 +1176,24 @@ namespace MatchZy
                 // Server.ExecuteCommand($"mp_teamname_2 {matchzyTeam2.teamName}");
             }
 
+            Log("[HandleMatchStart] setting team names");
             Server.ExecuteCommand($"mp_teamname_1 {reverseTeamSides["CT"].teamName}");
             Server.ExecuteCommand($"mp_teamname_2 {reverseTeamSides["TERRORIST"].teamName}");
 
             HandleClanTags();
 
+            Log("[HandleMatchStart] InitMatch in DB");
             string seriesType = "BO" + matchConfig.NumMaps.ToString();
             liveMatchId = database.InitMatch(matchzyTeam1.teamName, matchzyTeam2.teamName, "-", isMatchSetup, liveMatchId, matchConfig.CurrentMapNumber, seriesType, matchConfig);
+            Log($"[HandleMatchStart] InitMatch OK liveMatchId={liveMatchId}");
             SetupRoundBackupFile();
-
-            GetSpawns();
+            Log("[HandleMatchStart] SetupRoundBackupFile OK, SKIPPING GetSpawns (only needed for .spawn practice command)");
+            // GetSpawns() solo se necesita para el comando .spawn N en
+            // modo práctica. Llamarlo durante match-live causa interop
+            // pesado con entidades nativas (CBodyComponent) justo cuando
+            // el engine está procesando mp_restartgame y respawneando
+            // jugadores — race condition que produce SIGSEGV.
+            Log($"[HandleMatchStart] proceeding. isPreVeto={isPreVeto} isKnifeRequired={isKnifeRequired}");
 
             if (isPreVeto)
             {
@@ -993,8 +1205,12 @@ namespace MatchZy
             }
             else
             {
-                StartDemoRecording();
+                // NOTA: NO llamar StartDemoRecording aquí. StartLive() ya lo
+                // hace internamente. La doble llamada estaba dejando estado
+                // inconsistente y contribuyendo al segfault al cargar live.cfg.
+                Log("[HandleMatchStart] calling StartLive");
                 StartLive();
+                Log("[HandleMatchStart] StartLive returned");
             }
             if (showCreditsOnMatchStart.Value)
             {
@@ -1542,6 +1758,12 @@ namespace MatchZy
             {
                 Log($"[StartLive] Starting Live! Executing Live CFG from {cfgPath}");
                 Server.ExecuteCommand($"exec {cfgPath}");
+                // CRÍTICO: ambos comandos deben ir encolados juntos en el
+                // mismo ExecuteCommand() y SIN delay, igual que upstream.
+                // Si se separan o se difieren, el `mp_warmup_end` interno
+                // del live.cfg dispara BeginMatch antes de que mp_restartgame
+                // limpie el estado, y el engine crashea con SIGSEGV en
+                // SteamAPI durante BeginMatch.
                 Server.ExecuteCommand("mp_restartgame 1;mp_warmup_end;");
             }
             else
@@ -2031,10 +2253,19 @@ namespace MatchZy
 
         public void KickPlayer(CCSPlayerController player)
         {
-            if (player.UserId.HasValue)
+            if (!player.UserId.HasValue) return;
+            // Defer the kick to the next frame. Calling Server.ExecuteCommand("kickid ...")
+            // synchronously from inside an event handler (e.g. EventPlayerConnectFull) can
+            // crash the server with a segfault, because the engine is still mid-way through
+            // initializing/finalizing the client. NextFrame ensures the engine is in a stable
+            // state before issuing the kick.
+            ushort userId = (ushort)player.UserId.Value;
+            string playerName = player.PlayerName;
+            Server.NextFrame(() =>
             {
-                Server.ExecuteCommand($"kickid {(ushort)player.UserId}");
-            }
+                Log($"[KickPlayer] Executing deferred kickid {userId} ({playerName})");
+                Server.ExecuteCommand($"kickid {userId}");
+            });
         }
 
         public bool IsPlayerValid(CCSPlayerController? player)
@@ -2263,7 +2494,7 @@ namespace MatchZy
             foreach (var player in players)
             {
                 if (!IsPlayerValid(player)) continue;
-                
+
                 if (teamSpawns[player.TeamNum].Count == 0) break;
 
                 int randomIndex = random.Next(teamSpawns[player.TeamNum].Count);
