@@ -4,6 +4,7 @@ using CounterStrikeSharp.API.Core;
 using CounterStrikeSharp.API.Modules.Utils;
 
 namespace MatchZy;
+
 public partial class MatchZy
 {
     public HookResult EventPlayerConnectFullHandler(EventPlayerConnectFull @event, GameEventInfo info)
@@ -52,7 +53,7 @@ public partial class MatchZy
                             playerReadyStatus[player.UserId.Value] = true;
 
                             int connected = GetConnectedMatchPlayers();
-                            int expected  = GetExpectedMatchPlayersCount();
+                            int expected = GetExpectedMatchPlayersCount();
 
                             PrintToAllChat($"{ChatColors.Green}{player.PlayerName}{ChatColors.Default} se ha conectado. " +
                                            $"Jugadores conectados: {ChatColors.Green}{connected}/{expected}{ChatColors.Default}");
@@ -60,12 +61,12 @@ public partial class MatchZy
                             // Fire player_connected webhook event
                             var connectEvent = new MatchZyPlayerConnectedEvent
                             {
-                                MatchId      = liveMatchId,
+                                MatchId = liveMatchId,
                                 PlayerSteamId = player.SteamID.ToString(),
-                                PlayerName   = player.PlayerName,
-                                Team         = matchTeam,
+                                PlayerName = player.PlayerName,
+                                Team = matchTeam,
                                 ConnectedCount = connected,
-                                ExpectedCount  = expected,
+                                ExpectedCount = expected,
                             };
                             Task.Run(async () => await SendEventAsync(connectEvent));
 
@@ -235,18 +236,23 @@ public partial class MatchZy
         }
     }
 
-    public HookResult EventPlayerGivenC4(EventPlayerGivenC4 @event, GameEventInfo info) {
-        try {
+    public HookResult EventPlayerGivenC4(EventPlayerGivenC4 @event, GameEventInfo info)
+    {
+        try
+        {
             if (!matchStarted) return HookResult.Continue;
             if (@event.Userid == null) return HookResult.Continue;
             var recv = @event.Userid;
 
             // check if coach
             var coaches = reverseTeamSides["TERRORIST"].coach;
-            if (coaches.Contains(recv)) {
+            if (coaches.Contains(recv))
+            {
                 TransferCoachBomb(recv);
             }
-        } catch (Exception e) {
+        }
+        catch (Exception e)
+        {
             Log($"[EventPlayerGivenC4 FATAL] An error occured: {e.Message}");
         }
         return HookResult.Continue;
@@ -259,7 +265,8 @@ public partial class MatchZy
             if (!isPractice || entity == null || entity.Entity == null) return;
             if (!Constants.ProjectileTypeMap.ContainsKey(entity.Entity.DesignerName)) return;
 
-            Server.NextFrame(() => {
+            Server.NextFrame(() =>
+            {
                 CBaseCSGrenadeProjectile projectile = new CBaseCSGrenadeProjectile(entity.Handle);
 
                 if (!projectile.IsValid ||
@@ -270,28 +277,29 @@ public partial class MatchZy
                 ) return;
 
                 CCSPlayerController player = new(projectile.Thrower.Value.Controller.Value.Handle);
-                if(!player.IsValid || player.PlayerPawn.Value == null || !player.PlayerPawn.IsValid) return;
+                if (!player.IsValid || player.PlayerPawn.Value == null || !player.PlayerPawn.IsValid) return;
                 int client = player.UserId!.Value;
-                
+
                 Vector position = new(projectile.AbsOrigin!.X, projectile.AbsOrigin.Y, projectile.AbsOrigin.Z);
                 QAngle angle = new(projectile.AbsRotation!.X, projectile.AbsRotation.Y, projectile.AbsRotation.Z);
                 Vector velocity = new(projectile.AbsVelocity.X, projectile.AbsVelocity.Y, projectile.AbsVelocity.Z);
                 string nadeType = Constants.ProjectileTypeMap[entity.Entity.DesignerName];
 
-                if (!lastGrenadesData.ContainsKey(client)) {
+                if (!lastGrenadesData.ContainsKey(client))
+                {
                     lastGrenadesData[client] = new();
                 }
 
                 if (!nadeSpecificLastGrenadeData.ContainsKey(client))
                 {
-                    nadeSpecificLastGrenadeData[client] = new(){};
+                    nadeSpecificLastGrenadeData[client] = new() { };
                 }
 
                 GrenadeThrownData lastGrenadeThrown = new(
-                    position, 
-                    angle, 
-                    velocity, 
-                    player.PlayerPawn.Value.CBodyComponent!.SceneNode!.AbsOrigin, 
+                    position,
+                    angle,
+                    velocity,
+                    player.PlayerPawn.Value.CBodyComponent!.SceneNode!.AbsOrigin,
                     player.PlayerPawn.Value.EyeAngles,
                     nadeType,
                     DateTime.Now,
@@ -336,6 +344,53 @@ public partial class MatchZy
                     info.DontBroadcast = true;
                 }
             }
+
+            // ── Live match stat tracking ──────────────────────────────────────────
+            if (isMatchLive)
+            {
+                CCSPlayerController? victim = @event.Userid;
+                CCSPlayerController? attacker = @event.Attacker;
+                CCSPlayerController? assister = @event.Assister;
+                bool isSuicide = attacker == null || attacker == victim;
+
+                if (IsPlayerValid(victim))
+                {
+                    ulong victimSteamId = victim!.SteamID;
+
+                    // Knife kill
+                    if (!isSuicide && IsPlayerValid(attacker))
+                    {
+                        string weapon = @event.Weapon ?? "";
+                        if (weapon.Contains("knife") || weapon == "knifegg")
+                            IncrementStat(playerKnifeKills, attacker!.SteamID);
+
+                        // KAST: K for attacker
+                        if (attacker!.TeamNum != victim.TeamNum)
+                            MarkKast(attacker.SteamID, "K");
+                    }
+
+                    // KAST: A for assister
+                    if (IsPlayerValid(assister) && assister!.TeamNum != victim.TeamNum)
+                        MarkKast(assister.SteamID, "A");
+
+                    // Trade detection: check if victim's killer was recently killed
+                    var now = DateTime.UtcNow;
+                    foreach (var (deadSteamId, entry) in recentDeaths)
+                    {
+                        if (entry.killerSteamId == victimSteamId &&
+                            (now - entry.time).TotalSeconds <= 5.0)
+                        {
+                            // The victim just killed someone who had killed deadSteamId → trade
+                            MarkKast(deadSteamId, "T");
+                        }
+                    }
+
+                    // Record this death for future trade detection
+                    if (!isSuicide && IsPlayerValid(attacker))
+                        recentDeaths[victimSteamId] = (now, attacker!.SteamID);
+                }
+            }
+
             return HookResult.Continue;
         }
         catch (Exception e)
@@ -350,7 +405,7 @@ public partial class MatchZy
         if (!isPractice || isDryRun) return HookResult.Continue;
         CCSPlayerController? player = @event.Userid;
         if (!IsPlayerValid(player)) return HookResult.Continue;
-        if(lastGrenadeThrownTime.TryGetValue(@event.Entityid, out var thrownTime)) 
+        if (lastGrenadeThrownTime.TryGetValue(@event.Entityid, out var thrownTime))
         {
             PrintToPlayerChat(player!, Localizer["matchzy.pracc.smoke", player!.PlayerName, $"{(DateTime.Now - thrownTime).TotalSeconds:0.00}"]);
             lastGrenadeThrownTime.Remove(@event.Entityid);
@@ -363,7 +418,7 @@ public partial class MatchZy
         if (!isPractice || isDryRun) return HookResult.Continue;
         CCSPlayerController? player = @event.Userid;
         if (!IsPlayerValid(player)) return HookResult.Continue;
-        if(lastGrenadeThrownTime.TryGetValue(@event.Entityid, out var thrownTime)) 
+        if (lastGrenadeThrownTime.TryGetValue(@event.Entityid, out var thrownTime))
         {
             PrintToPlayerChat(player!, Localizer["matchzy.pracc.flash", player!.PlayerName, $"{(DateTime.Now - thrownTime).TotalSeconds:0.00}"]);
             lastGrenadeThrownTime.Remove(@event.Entityid);
@@ -376,7 +431,7 @@ public partial class MatchZy
         if (!isPractice || isDryRun) return HookResult.Continue;
         CCSPlayerController? player = @event.Userid;
         if (!IsPlayerValid(player)) return HookResult.Continue;
-        if(lastGrenadeThrownTime.TryGetValue(@event.Entityid, out var thrownTime)) 
+        if (lastGrenadeThrownTime.TryGetValue(@event.Entityid, out var thrownTime))
         {
             PrintToPlayerChat(player!, Localizer["matchzy.pracc.grenade", player!.PlayerName, $"{(DateTime.Now - thrownTime).TotalSeconds:0.00}"]);
             lastGrenadeThrownTime.Remove(@event.Entityid);
@@ -389,7 +444,7 @@ public partial class MatchZy
         if (!isPractice || isDryRun) return HookResult.Continue;
         CCSPlayerController? player = @event.Userid;
         if (!IsPlayerValid(player)) return HookResult.Continue;
-        if(lastGrenadeThrownTime.TryGetValue(@event.Get<int>("entityid"), out var thrownTime)) 
+        if (lastGrenadeThrownTime.TryGetValue(@event.Get<int>("entityid"), out var thrownTime))
         {
             PrintToPlayerChat(player!, Localizer["matchzy.pracc.molotov", player!.PlayerName, $"{(DateTime.Now - thrownTime).TotalSeconds:0.00}"]);
         }
@@ -401,7 +456,7 @@ public partial class MatchZy
         if (!isPractice || isDryRun) return HookResult.Continue;
         CCSPlayerController? player = @event.Userid;
         if (!IsPlayerValid(player)) return HookResult.Continue;
-        if(lastGrenadeThrownTime.TryGetValue(@event.Entityid, out var thrownTime)) 
+        if (lastGrenadeThrownTime.TryGetValue(@event.Entityid, out var thrownTime))
         {
             PrintToPlayerChat(player!, Localizer["matchzy.pracc.decoy", player!.PlayerName, $"{(DateTime.Now - thrownTime).TotalSeconds:0.00}"]);
             lastGrenadeThrownTime.Remove(@event.Entityid);

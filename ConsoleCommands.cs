@@ -542,6 +542,7 @@ namespace MatchZy
                 return;
             }
             string currentMapName = Server.MapName;
+            StopTvForMapChange();
             if (long.TryParse(currentMapName, out _))
             { // Check if mapName is a long for workshop map ids
                 Server.ExecuteCommand($"bot_kick");

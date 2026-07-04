@@ -84,6 +84,17 @@ namespace MatchZy
             });
         }
 
+        public void StopTvForMapChange()
+        {
+            bool tvBroadcast = ConVar.Find("tv_broadcast")!.GetPrimitiveValue<bool>();
+            if (tvBroadcast) Server.ExecuteCommand("tv_broadcast 0");
+            if (isDemoRecording)
+            {
+                Server.ExecuteCommand("tv_stoprecord");
+                isDemoRecording = false;
+            }
+        }
+
         public int GetTvDelay()
         {
             bool tvEnable = ConVar.Find("tv_enable")!.GetPrimitiveValue<bool>();

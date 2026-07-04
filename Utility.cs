@@ -570,6 +570,7 @@ namespace MatchZy
                     isDemoRecording = false;
                 }
                 // Reset match data
+                ResetMatchStats();
                 matchStarted = false;
                 readyAvailable = true;
                 isPaused = false;
@@ -990,6 +991,7 @@ namespace MatchZy
                 mapName = "de_" + mapName;
             }
 
+            StopTvForMapChange();
             if (long.TryParse(mapName, out _))
             { // Check if mapName is a long for workshop map ids
                 Server.ExecuteCommand($"bot_kick");
@@ -1348,17 +1350,17 @@ namespace MatchZy
             }
             if (matchzyTeam1.seriesScore > matchzyTeam2.seriesScore)
             {
-                Server.PrintToChatAll($"{chatPrefix} {ChatColors.Green}{matchzyTeam1.teamName}{ChatColors.Default} is winning the series {ChatColors.Green}{matchzyTeam1.seriesScore}-{matchzyTeam2.seriesScore}{ChatColors.Default}");
+                Server.PrintToChatAll($"{chatPrefix} {ChatColors.Green}{matchzyTeam1.teamName}{ChatColors.Default} está ganando la serie {ChatColors.Green}{matchzyTeam1.seriesScore}-{matchzyTeam2.seriesScore}{ChatColors.Default}");
 
             }
             else if (matchzyTeam2.seriesScore > matchzyTeam1.seriesScore)
             {
-                Server.PrintToChatAll($"{chatPrefix} {ChatColors.Green}{matchzyTeam2.teamName}{ChatColors.Default} is winning the series {ChatColors.Green}{matchzyTeam2.seriesScore}-{matchzyTeam1.seriesScore}{ChatColors.Default}");
+                Server.PrintToChatAll($"{chatPrefix} {ChatColors.Green}{matchzyTeam2.teamName}{ChatColors.Default} está ganando la serie {ChatColors.Green}{matchzyTeam2.seriesScore}-{matchzyTeam1.seriesScore}{ChatColors.Default}");
 
             }
             else
             {
-                Server.PrintToChatAll($"{chatPrefix} The series is tied at {ChatColors.Green}{matchzyTeam1.seriesScore}-{matchzyTeam2.seriesScore}{ChatColors.Default}");
+                Server.PrintToChatAll($"{chatPrefix} la serie está empatada en {ChatColors.Green}{matchzyTeam1.seriesScore}-{matchzyTeam2.seriesScore}{ChatColors.Default}");
             }
             matchConfig.CurrentMapNumber += 1;
             string nextMap = matchConfig.Maplist[matchConfig.CurrentMapNumber];
@@ -1371,23 +1373,43 @@ namespace MatchZy
 
             KillPhaseTimers();
 
+            // CRÍTICO: Desactivar mp_match_end_restart ANTES del changelevel BO3/BO5.
+            // StartLive() lo activa con "mp_match_end_restart true" para que el
+            // engine recargue el mapa al terminar una partida. En BO1 eso es
+            // inofensivo porque EndSeries/ResetMatch no emite ningún changelevel.
+            // En BO3/BO5, sin embargo, el engine intenta recargar el mapa actual
+            // (~1 segundo DESPUÉS de que el plugin ya ejecutó "changelevel mapa2"),
+            // produciendo dos changelevel simultáneos que corrompen el estado del
+            // engine y provocan el crash del servidor (SIGSEGV / exit 139).
+            Server.ExecuteCommand("mp_match_end_restart false");
+
             AddTimer(restartDelay - 4, () =>
             {
                 if (!isMatchSetup) return;
-                ChangeMap(nextMap, 3.0f);
+
+                // Resetear estado ANTES del changelevel para que los timers del
+                // warmup que arranquen en OnMapStart vean el estado correcto.
                 matchStarted = false;
                 readyAvailable = true;
                 isPaused = false;
-
                 isWarmup = true;
                 isKnifeRound = false;
                 isSideSelectionPhase = false;
                 isMatchLive = false;
                 isPractice = false;
                 isDryRun = false;
-                isWaitingForPlayers = false; // reset before restarting
-                StartWarmup();
+                isWaitingForPlayers = false;
+
                 SetMapSides();
+
+                // NO llamar StartWarmup() aquí: haría exec warmup.cfg sobre el
+                // mapa antiguo (incorrecto) y crearía un TimerFlags.REPEAT que
+                // disparía durante el changelevel, accediendo a entidades de
+                // jugadores ya invalidadas → crash. OnMapStart ya llama
+                // StartWarmup() cuando isWarmup == true.
+
+                ChangeMap(nextMap, 3.0f);
+
                 // BO3/BO5: el watchdog de espera de jugadores se reinicia
                 // desde `OnMapStart` del mapa siguiente (junto al evento
                 // `map_warmup_started`). De esa forma el timeout empieza a
@@ -1402,6 +1424,7 @@ namespace MatchZy
             Log($"[ChangeMap] Changing map to {mapName} with delay {delay}");
             AddTimer(delay, () =>
             {
+                StopTvForMapChange();
                 if (long.TryParse(mapName, out _))
                 {
                     Server.ExecuteCommand($"bot_kick");
@@ -1469,6 +1492,7 @@ namespace MatchZy
             CreateMatchZyRoundDataBackup();
             InitPlayerDamageInfo();
             UpdateHostname();
+            if (isMatchLive) ResetPerRoundKastState();
         }
 
         private void HandlePostRoundEndEvent(EventRoundEnd @event)
@@ -1484,6 +1508,7 @@ namespace MatchZy
 
                     ShowDamageInfo();
 
+                    FinalizeKastForRound();
                     (Dictionary<ulong, Dictionary<string, object>> playerStatsDictionary, List<StatsPlayer> playerStatsListTeam1, List<StatsPlayer> playerStatsListTeam2) = GetPlayerStatsDict();
 
                     int currentMapNumber = matchConfig.CurrentMapNumber;
@@ -2111,24 +2136,39 @@ namespace MatchZy
                     playerStatsDictionary.Add(steamid64, stats);
 
                     // Populate PlayerStats instance
-                    // Todo: Implement stats which are marked as 0 for now
+                    playerFlashAssists.TryGetValue(steamid64, out int flashAssists);
+                    playerTeammatesFlashed.TryGetValue(steamid64, out int teammatesFlashed);
+                    playerKnifeKills.TryGetValue(steamid64, out int knifeKills);
+                    playerBombPlants.TryGetValue(steamid64, out int bombPlants);
+                    playerBombDefuses.TryGetValue(steamid64, out int bombDefuses);
+                    kastRoundsContributed.TryGetValue(steamid64, out int kastRounds);
+                    int kastPercent = roundsPlayed > 0 ? (int)Math.Round((double)kastRounds / roundsPlayed * 100) : 0;
+
+                    // Persist new tracked stats in the dictionary used by the DB layer
+                    stats["FlashAssists"] = flashAssists;
+                    stats["FriendliesFlashed"] = teammatesFlashed;
+                    stats["KnifeKills"] = knifeKills;
+                    stats["BombPlants"] = bombPlants;
+                    stats["BombDefuses"] = bombDefuses;
+                    stats["Kast"] = kastPercent;
+
                     PlayerStats playerStatsInstance = new()
                     {
                         Kills = playerStats.Kills,
                         Deaths = playerStats.Deaths,
                         Assists = playerStats.Assists,
-                        FlashAssists = 0,
+                        FlashAssists = flashAssists,
                         TeamKills = 0,
                         Suicides = 0,
                         Damage = playerStats.Damage,
                         UtilityDamage = playerStats.UtilityDamage,
                         EnemiesFlashed = playerStats.EnemiesFlashed,
-                        FriendliesFlashed = 0,
-                        KnifeKills = 0,
+                        FriendliesFlashed = teammatesFlashed,
+                        KnifeKills = knifeKills,
                         HeadshotKills = playerStats.HeadShotKills,
                         RoundsPlayed = roundsPlayed,
-                        BombDefuses = 0,
-                        BombPlants = 0,
+                        BombDefuses = bombDefuses,
+                        BombPlants = bombPlants,
                         Kills1 = 0,
                         Kills2 = playerStats.Enemy2Ks,
                         Kills3 = playerStats.Enemy3Ks,
@@ -2144,7 +2184,7 @@ namespace MatchZy
                         FirstDeathsT = 0,
                         FirstDeathsCT = 0,
                         TradeKills = 0,
-                        Kast = 0,
+                        Kast = kastPercent,
                         Score = player.Score,
                         Mvps = player.MVPs,
                     };

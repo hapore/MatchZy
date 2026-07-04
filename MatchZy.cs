@@ -630,6 +630,20 @@ namespace MatchZy
             {
                 CCSPlayerController? player = @event.Userid;
                 CCSPlayerController? attacker = @event.Attacker;
+
+                // Track flash stats during live match
+                if (isMatchLive && IsPlayerValid(player) && IsPlayerValid(attacker) && attacker!.IsValid)
+                {
+                    if (@event.BlindDuration >= 1.0f)
+                    {
+                        ulong attackerSteamId = attacker.SteamID;
+                        if (attacker.TeamNum == player!.TeamNum)
+                            IncrementStat(playerTeammatesFlashed, attackerSteamId);
+                        else
+                            IncrementStat(playerFlashAssists, attackerSteamId);
+                    }
+                }
+
                 if (!isPractice) return HookResult.Continue;
 
                 if (!IsPlayerValid(player) || !IsPlayerValid(attacker)) return HookResult.Continue;
@@ -645,6 +659,24 @@ namespace MatchZy
                     Server.NextFrame(() => KillFlashEffect(player));
                 }
 
+                return HookResult.Continue;
+            });
+
+            RegisterEventHandler<EventBombPlanted>((@event, info) =>
+            {
+                if (!isMatchLive) return HookResult.Continue;
+                CCSPlayerController? player = @event.Userid;
+                if (IsPlayerValid(player))
+                    IncrementStat(playerBombPlants, player!.SteamID);
+                return HookResult.Continue;
+            });
+
+            RegisterEventHandler<EventBombDefused>((@event, info) =>
+            {
+                if (!isMatchLive) return HookResult.Continue;
+                CCSPlayerController? player = @event.Userid;
+                if (IsPlayerValid(player))
+                    IncrementStat(playerBombDefuses, player!.SteamID);
                 return HookResult.Continue;
             });
 
