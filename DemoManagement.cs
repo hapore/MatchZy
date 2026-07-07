@@ -34,7 +34,7 @@ namespace MatchZy
                 Log("[StartDemoRecording] Demo recording is already in progress.");
                 return;
             }
-            string demoFileName = FormatCvarValue(demoNameFormat.Replace(" ", "_")) + ".dem";
+            string demoFileName = SanitizeDemoFileName(FormatCvarValue(demoNameFormat.Replace(" ", "_"))) + ".dem";
             try
             {
                 string? directoryPath = Path.GetDirectoryName(Path.Join(Server.GameDirectory + "/csgo/", demoPath));
@@ -59,6 +59,33 @@ namespace MatchZy
                 isDemoRecording = true;
             }
 
+        }
+
+        /// <summary>
+        /// Removes non-ASCII characters (e.g. player/team names like "魔王") and any
+        /// characters that are unsafe in a file name. This is required because the
+        /// demo file name is later sent as an HTTP header (MatchZy-FileName /
+        /// Get5-FileName) during upload, and HTTP headers must contain only ASCII.
+        /// Keeping the on-disk name ASCII too avoids header/file mismatches.
+        /// </summary>
+        private string SanitizeDemoFileName(string name)
+        {
+            StringBuilder sb = new(name.Length);
+            foreach (char c in name)
+            {
+                if (c > 127) continue; // drop non-ASCII characters
+                if (char.IsLetterOrDigit(c) || c == '_' || c == '-' || c == '.')
+                {
+                    sb.Append(c);
+                }
+                else
+                {
+                    sb.Append('_'); // replace remaining invalid chars
+                }
+            }
+            // Collapse leading/trailing separators; fall back to a default if empty.
+            string result = sb.ToString().Trim('_', '-', '.');
+            return string.IsNullOrEmpty(result) ? "demo" : result;
         }
 
         public void StopDemoRecording(float delay, string activeDemoFile, long liveMatchId, int currentMapNumber)
