@@ -69,8 +69,14 @@ namespace MatchZy
             }
         }
 
-        // ─── Called on match reset ────────────────────────────────────────────────
-        public void ResetMatchStats()
+        // ─── Called when a new map goes live (per-map stats reset) ────────────────
+        // Estas estadísticas se persisten por mapa en `matchzy_stats_players`
+        // (PK: matchid, mapnumber, steamid64). En un BO3/BO5 cada mapa es una fila
+        // independiente, por lo que los contadores deben reiniciarse al inicio de
+        // cada mapa; de lo contrario se acumulan entre mapas e inflan los valores
+        // (p. ej. KAST > 100% porque kastRounds es acumulado pero roundsPlayed es
+        // por mapa).
+        public void ResetPerMapStats()
         {
             playerKnifeKills.Clear();
             playerBombPlants.Clear();
@@ -80,6 +86,13 @@ namespace MatchZy
             kastRoundsContributed.Clear();
             kastFlags.Clear();
             recentDeaths.Clear();
+        }
+
+        // ─── Called on match reset ────────────────────────────────────────────────
+        public void ResetMatchStats()
+        {
+            // Un reset de match limpia el mismo conjunto de contadores por-mapa.
+            ResetPerMapStats();
         }
     }
 }

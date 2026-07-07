@@ -492,6 +492,11 @@ namespace MatchZy
         private void StartLive()
         {
             Log("[StartLive] ENTER -> SetupLiveFlagsAndCfg");
+            // Reinicia las estadísticas por-mapa (KAST, knife kills, bomb plants,
+            // flash assists, etc.) al inicio de cada mapa. Sin esto, en un BO3/BO5
+            // los contadores se acumulan entre mapas e inflan los valores
+            // persistidos por mapa (KAST llegaba a >100%).
+            ResetPerMapStats();
             SetupLiveFlagsAndCfg();
             Log("[StartLive] SetupLiveFlagsAndCfg OK -> StartDemoRecording");
             StartDemoRecording();
