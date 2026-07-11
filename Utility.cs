@@ -730,7 +730,7 @@ namespace MatchZy
 
                     // A player controller still exists after a player disconnects
                     // Hence checking whether the player is actually in the server or not
-                    if (player.Connected != PlayerConnectedState.PlayerConnected) continue;
+                    if (player.Connected != PlayerConnectedState.Connected) continue;
 
                     if (player.UserId.HasValue)
                     {
@@ -1279,12 +1279,17 @@ namespace MatchZy
             // Ref: Get5
             int restartDelay = ConVar.Find("mp_match_restart_delay")!.GetPrimitiveValue<int>();
             int tvDelay = GetTvDelay();
-            int requiredDelay = tvDelay + 15;
-            int tvFlushDelay = requiredDelay;
-            if (tvDelay > 0.0)
-            {
-                requiredDelay += 10;
-            }
+            int tvFlushDelay = tvDelay + 15;
+            // El changelevel del siguiente mapa (BO3/BO5) se agenda a partir de
+            // restartDelay y debe ocurrir con margen DESPUÉS del tv_stoprecord real
+            // (agendado más abajo en tvFlushDelay - 0.5). Antes el +10 de colchón solo
+            // se sumaba si tvDelay > 0; con tv_delay 0 (GOTV sin delay o tv_enable 0
+            // con demo recording activo) restartDelay quedaba en ~15 y el changelevel
+            // terminaba disparándose ANTES que el tv_stoprecord agendado, corriendo la
+            // parada real de la grabación al mismo tick que el changelevel dentro de
+            // ChangeMap()/StopTvForMapChange() — causa del crash intermitente del
+            // engine al cambiar de mapa con la demo/GOTV todavía cerrando el archivo.
+            int requiredDelay = tvFlushDelay + 10;
             if (requiredDelay > restartDelay)
             {
                 Log($"Extended mp_match_restart_delay from {restartDelay} to {requiredDelay} to ensure GOTV broadcast can finish.");
