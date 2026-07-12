@@ -1307,6 +1307,13 @@ namespace MatchZy
             int team2SeriesScore = matchzyTeam2.seriesScore;
 
             string statsPath = Server.GameDirectory + "/csgo/MatchZy_Stats/" + liveMatchId.ToString();
+            string statsBackupRoot = GetStatsBackupRoot();
+
+            // Capturados en el hilo del juego: liveMatchId puede cambiar (ResetMatch)
+            // antes de que el Task.Run de abajo termine de correr en background.
+            long matchId = liveMatchId;
+            Task? pendingRoundTask = _lastRoundStatsTask;
+            int expectedPlayers = _lastRoundExpectedPlayerCount;
 
             var mapResultEvent = new MapResultEvent
             {
@@ -1319,9 +1326,60 @@ namespace MatchZy
 
             Task.Run(async () =>
             {
+                // Arreglo de la causa raiz de la race condition documentada en
+                // DatabaseStats.cs (_dbLock): esperar a que la escritura en BD de la
+                // ULTIMA ronda haya terminado (con exito o falla) antes de leer/
+                // regenerar el CSV, en vez de dejar que dos Task.Run independientes
+                // compitan por el orden de ejecucion.
+                if (pendingRoundTask != null)
+                {
+                    try
+                    {
+                        await pendingRoundTask;
+                    }
+                    catch (Exception e)
+                    {
+                        Log($"[HandleMatchEnd] La tarea de guardado de la ultima ronda fallo: {e.Message}");
+                    }
+                }
+
                 await SendEventAsync(mapResultEvent);
-                await database.SetMapEndData(liveMatchId, currentMapNumber, winnerName, t1score, t2score, team1SeriesScore, team2SeriesScore);
-                await database.WritePlayerStatsToCsv(statsPath, liveMatchId, currentMapNumber);
+                await database.SetMapEndData(matchId, currentMapNumber, winnerName, t1score, t2score, team1SeriesScore, team2SeriesScore);
+                await database.WritePlayerStatsToCsv(statsPath, matchId, currentMapNumber);
+
+                // Red de seguridad de segundo nivel: si a pesar de lo anterior las
+                // filas de matchzy_stats_players no quedaron completas (ej. la BD
+                // estuvo caida durante la ronda final), reintentar automaticamente
+                // desde el backup en disco, sin intervencion manual.
+                if (expectedPlayers > 0)
+                {
+                    int actualRows = await database.CountPlayerStatsRows(matchId, currentMapNumber);
+                    if (actualRows < expectedPlayers)
+                    {
+                        Log($"[HandleMatchEnd] Mismatch de stats para matchId {matchId} mapNumber {currentMapNumber}: esperados {expectedPlayers}, encontrados {actualRows}. Reintentando automaticamente...");
+                        bool recovered = false;
+                        for (int attempt = 1; attempt <= 3 && !recovered; attempt++)
+                        {
+                            await Task.Delay(attempt * 1000);
+                            (bool success, _, string message) = await RetryStatsFromBackup(matchId, currentMapNumber, statsBackupRoot, statsPath);
+                            actualRows = await database.CountPlayerStatsRows(matchId, currentMapNumber);
+                            recovered = success && actualRows >= expectedPlayers;
+                            if (!success)
+                            {
+                                Log($"[HandleMatchEnd] Intento {attempt} de auto-reintento fallo para matchId {matchId} mapNumber {currentMapNumber}: {message}");
+                            }
+                        }
+
+                        if (recovered)
+                        {
+                            Log($"[HandleMatchEnd] Auto-reintento exitoso para matchId {matchId} mapNumber {currentMapNumber} ({actualRows} filas).");
+                        }
+                        else
+                        {
+                            Log($"[HandleMatchEnd FATAL] Auto-reintento agotado para matchId {matchId} mapNumber {currentMapNumber} ({actualRows}/{expectedPlayers} filas). Ejecutar manualmente: matchzy_retry_stats {matchId} {currentMapNumber}");
+                        }
+                    }
+                }
             });
 
             // If a match is not setup, it was supposed to be a pug/scrim with 1 map
@@ -1539,7 +1597,15 @@ namespace MatchZy
                         StatsTeam2 = new MatchZyStatsTeam(matchzyTeam2.id, matchzyTeam2.teamName, 0, t2score, 0, 0, playerStatsListTeam2),
                     };
 
-                    Task.Run(async () =>
+                    // Sincrono y antes del Task.Run de abajo: debe sobrevivir aunque el
+                    // envio del webhook o la escritura a la BD fallen. A diferencia del
+                    // backup de restauracion (CreateMatchZyRoundDataBackup, disparado en
+                    // RoundStart), este se dispara en RoundEnd y por eso si cubre la
+                    // ultima ronda jugada. Ver StatsBackup.cs.
+                    CreateRoundStatsBackup(roundEndEvent, playerStatsDictionary);
+
+                    _lastRoundExpectedPlayerCount = playerStatsListTeam1.Count + playerStatsListTeam2.Count;
+                    _lastRoundStatsTask = Task.Run(async () =>
                     {
                         await SendEventAsync(roundEndEvent);
                         await database.UpdatePlayerStatsAsync(matchId, currentMapNumber, playerStatsDictionary);

@@ -92,6 +92,27 @@ namespace MatchZy
 
         }
 
+        // Ninguno de los metodos publicos de abajo verificaba el estado de
+        // `connection` antes de usarla. Si la conexion se cae a mitad de un
+        // match (restart de MySQL, blip de red), todas las escrituras
+        // subsiguientes del resto del match fallaban en silencio (solo
+        // logueadas) sin ningun intento de reconexion, hasta que el proceso
+        // del plugin se reiniciara. EnsureConnectionOpen() se llama al
+        // principio de cada metodo publico que toca `connection` para
+        // reabrirla si quedo cerrada/rota.
+        private void EnsureConnectionOpen()
+        {
+            if (connection.State == ConnectionState.Broken)
+            {
+                connection.Close();
+            }
+            if (connection.State != ConnectionState.Open)
+            {
+                Log($"[EnsureConnectionOpen] Conexion en estado {connection.State}, reabriendo...");
+                connection.Open();
+            }
+        }
+
         public void CreateRequiredTablesSQLite()
         {
             try
@@ -305,6 +326,7 @@ namespace MatchZy
         {
             try
             {
+                EnsureConnectionOpen();
                 string mapName = isMatchSetup ? matchConfig.Maplist[mapNumber] : Server.MapName;
                 string dateTimeExpression = (connection is SqliteConnection) ? "datetime('now')" : "NOW()";
 
@@ -365,6 +387,7 @@ namespace MatchZy
         {
             try
             {
+                EnsureConnectionOpen();
                 connection.Execute(@"
                     UPDATE matchzy_stats_matches
                     SET team1_name = @team1name, team2_name = @team2name
@@ -384,6 +407,7 @@ namespace MatchZy
             await _dbLock.WaitAsync();
             try
             {
+                EnsureConnectionOpen();
                 string dateTimeExpression = (connection is SqliteConnection) ? "datetime('now')" : "NOW()";
 
                 string sqlQuery = $@"
@@ -417,6 +441,7 @@ namespace MatchZy
             await _dbLock.WaitAsync();
             try
             {
+                EnsureConnectionOpen();
                 string dateTimeExpression = (connection is SqliteConnection) ? "datetime('now')" : "NOW()";
 
                 string sqlQuery = $@"
@@ -443,6 +468,7 @@ namespace MatchZy
             await _dbLock.WaitAsync();
             try
             {
+                EnsureConnectionOpen();
                 string sqlQuery = $@"
                     UPDATE matchzy_stats_maps
                     SET team1_score = @t1score, team2_score = @t2score
@@ -465,6 +491,7 @@ namespace MatchZy
             await _dbLock.WaitAsync();
             try
             {
+                EnsureConnectionOpen();
                 foreach (ulong steamid64 in playerStatsDictionary.Keys)
                 {
                     Log($"[UpdatePlayerStats] Going to update data for Match: {matchId}, MapNumber: {mapNumber}, Player: {steamid64}");
@@ -596,6 +623,7 @@ namespace MatchZy
             await _dbLock.WaitAsync();
             try
             {
+                EnsureConnectionOpen();
                 string csvFilePath = $"{filePath}/match_data_map{mapNumber}_{matchId}.csv";
                 string? directoryPath = Path.GetDirectoryName(csvFilePath);
                 if (directoryPath != null)
@@ -638,6 +666,82 @@ namespace MatchZy
             catch (Exception ex)
             {
                 Log($"[WritePlayerStatsToCsv - FATAL] Error writing data: {ex.Message}");
+            }
+            finally
+            {
+                _dbLock.Release();
+            }
+        }
+
+        // Usado por el auto-reintento de fin de mapa (Utility.cs HandleMatchEnd) para
+        // verificar si las filas de la ultima ronda realmente quedaron guardadas.
+        public async Task<int> CountPlayerStatsRows(long matchId, int mapNumber)
+        {
+            await _dbLock.WaitAsync();
+            try
+            {
+                EnsureConnectionOpen();
+                return await connection.ExecuteScalarAsync<int>(
+                    "SELECT COUNT(*) FROM matchzy_stats_players WHERE matchid = @matchId AND mapnumber = @mapNumber",
+                    new { matchId, mapNumber });
+            }
+            catch (Exception ex)
+            {
+                Log($"[CountPlayerStatsRows - FATAL] Error contando filas de matchId: {matchId} mapNumber: {mapNumber} [ERROR]: {ex.Message}");
+                return -1;
+            }
+            finally
+            {
+                _dbLock.Release();
+            }
+        }
+
+        // Insercion defensiva usada por el reintento de stats (StatsBackup.cs) para
+        // reconstruir un match desde su backup en disco. No pisa la fila si ya
+        // existe (creada normalmente por InitMatch al arrancar el match/mapa).
+        public async Task EnsureMatchRowExists(long matchId, string team1Name, string team2Name, string seriesType)
+        {
+            await _dbLock.WaitAsync();
+            try
+            {
+                EnsureConnectionOpen();
+                string dateTimeExpression = (connection is SqliteConnection) ? "datetime('now')" : "NOW()";
+                string sqlQuery = (connection is SqliteConnection)
+                    ? $@"INSERT OR IGNORE INTO matchzy_stats_matches (matchid, start_time, team1_name, team2_name, series_type)
+                         VALUES (@matchId, {dateTimeExpression}, @team1Name, @team2Name, @seriesType)"
+                    : $@"INSERT IGNORE INTO matchzy_stats_matches (matchid, start_time, team1_name, team2_name, series_type)
+                         VALUES (@matchId, {dateTimeExpression}, @team1Name, @team2Name, @seriesType)";
+
+                await connection.ExecuteAsync(sqlQuery, new { matchId, team1Name, team2Name, seriesType });
+            }
+            catch (Exception ex)
+            {
+                Log($"[EnsureMatchRowExists - FATAL] Error asegurando fila de matchId: {matchId} [ERROR]: {ex.Message}");
+            }
+            finally
+            {
+                _dbLock.Release();
+            }
+        }
+
+        public async Task EnsureMapRowExists(long matchId, int mapNumber, string mapName)
+        {
+            await _dbLock.WaitAsync();
+            try
+            {
+                EnsureConnectionOpen();
+                string dateTimeExpression = (connection is SqliteConnection) ? "datetime('now')" : "NOW()";
+                string sqlQuery = (connection is SqliteConnection)
+                    ? $@"INSERT OR IGNORE INTO matchzy_stats_maps (matchid, mapnumber, start_time, mapname)
+                         VALUES (@matchId, @mapNumber, {dateTimeExpression}, @mapName)"
+                    : $@"INSERT IGNORE INTO matchzy_stats_maps (matchid, mapnumber, start_time, mapname)
+                         VALUES (@matchId, @mapNumber, {dateTimeExpression}, @mapName)";
+
+                await connection.ExecuteAsync(sqlQuery, new { matchId, mapNumber, mapName });
+            }
+            catch (Exception ex)
+            {
+                Log($"[EnsureMapRowExists - FATAL] Error asegurando fila de matchId: {matchId} mapNumber: {mapNumber} [ERROR]: {ex.Message}");
             }
             finally
             {

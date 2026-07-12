@@ -25,6 +25,14 @@ MatchZy is a plugin for CS2 (Counter Strike 2) for running and managing practice
 * And much more!!
 
 
+## Stats Backup & Recovery
+
+Sometimes a match's player stats fail to persist to `matchzy_stats_players` (e.g. a MySQL blip mid-match), leaving an empty/incomplete CSV and no rows in the database, with no obvious error to the admin. This fork adds a self-contained recovery mechanism for that scenario:
+
+* **Per-round stats backup**: on every `round_end` (not just round start), MatchZy writes a JSON file to `csgo/MatchZy_StatsBackup/{matchid}/matchzy_stats_{matchid}_{mapnumber}_round{NN}.json`, containing the same data that goes into `matchzy_stats_players` for that map, plus a small header (map name, series type, team names/scores) and the full `round_end` webhook payload for reference. This is a **separate** system from the round-restore backups in `csgo/MatchZyDataBackup/` (used by `.stop`/`.restore`/`matchzy_loadbackup`) — that one is written on round *start* and therefore never covers the final round of a map; this one is written on round *end*, so the last round played always has a backup. Because CS2's native match stats are cumulative per map, the file from the last round alone is enough to reconstruct the full map result.
+* **Automatic self-healing**: after a map ends, the plugin verifies that `matchzy_stats_players` actually has one row per player for that match/map. If rows are missing (e.g. the DB connection dropped mid-match), it automatically retries writing them from the just-written backup JSON — no admin action needed in the common case. The plugin also proactively reopens its database connection if it was closed/broken, instead of silently failing every subsequent write for the rest of the match.
+* **Manual recovery command**: `matchzy_retry_stats <matchid> [mapnumber]` (alias `css_retrystats`, requires `@css/rcon`) reprocesses a match from its backup JSON on disk — inserting/updating `matchzy_stats_matches`, `matchzy_stats_maps` and `matchzy_stats_players`, and regenerating the CSV. It takes the matchid as an explicit parameter, so it works from server RCON/console at any time afterwards, even if the server has since moved on to another match. It's safe to run more than once (the underlying upserts are idempotent).
+
 ## Documentation
 
 ## [shobhit-pathak.github.io/MatchZy/](https://shobhit-pathak.github.io/MatchZy/)
