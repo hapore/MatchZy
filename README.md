@@ -33,6 +33,13 @@ Sometimes a match's player stats fail to persist to `matchzy_stats_players` (e.g
 * **Automatic self-healing**: after a map ends, the plugin verifies that `matchzy_stats_players` actually has one row per player for that match/map. If rows are missing (e.g. the DB connection dropped mid-match), it automatically retries writing them from the just-written backup JSON — no admin action needed in the common case. The plugin also proactively reopens its database connection if it was closed/broken, instead of silently failing every subsequent write for the rest of the match.
 * **Manual recovery command**: `matchzy_retry_stats <matchid> [mapnumber]` (alias `css_retrystats`, requires `@css/rcon`) reprocesses a match from its backup JSON on disk — inserting/updating `matchzy_stats_matches`, `matchzy_stats_maps` and `matchzy_stats_players`, and regenerating the CSV. It takes the matchid as an explicit parameter, so it works from server RCON/console at any time afterwards, even if the server has since moved on to another match. It's safe to run more than once (the underlying upserts are idempotent).
 
+## Demo Finalization Window
+
+Stopping GOTV and uploading the demo after a series ends can take up to ~2 minutes (recording flush delay + the HTTP upload itself). Previously, an external backend could load a brand new match onto the same server seconds after the last round ended — while the previous demo was still being closed/uploaded — corrupting the demo file and crashing/bugging the server. This fork closes that race:
+
+* **`isFinalizingDemo` guard**: set to `true` in `EndSeries()` for a fixed, deterministic window (`tv_delay` flush + a fixed upload grace period — not tied to whether the actual upload succeeds, fails, or is disabled) and checked by both `matchzy_loadmatch` and `matchzy_loadmatch_url`. While it's active, any attempt to load a new match is rejected with a clear log/chat message instead of silently racing the in-progress demo.
+* **`demo_window_end` event**: once that fixed window closes, the plugin emits a `demo_window_end` webhook event (`matchzy_remote_log_url`) with `matchid`/`map_number`. This is the event an external backend/panel should use to know it's safe to reuse the server for a new match — **not** `series_end`, which only signals that the match *result* is final, and **not** `demo_upload_ended`, since the real upload duration isn't bounded. See [Events.md](Events.md) for the full payload.
+
 ## Documentation
 
 ## [shobhit-pathak.github.io/MatchZy/](https://shobhit-pathak.github.io/MatchZy/)
