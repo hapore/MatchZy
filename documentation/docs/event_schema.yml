@@ -107,6 +107,29 @@ webhooks:
                       description: |
                         The number of seconds until MatchZy restores any changed ConVars and resets its game state to
                         `none` after the series has ended.
+  "MatchZyOnDemoWindowEnd":
+    post:
+      tags:
+        - Series Flow
+      summary: MatchZyOnDemoWindowEnd
+      description: |
+        Fired once a fixed, deterministic window has elapsed since the series ended (tv_delay flush + a fixed
+        upload grace period), regardless of whether the demo upload itself (see `demo_upload_ended`) succeeded,
+        failed, or is disabled. Consumers should treat this event - not `series_end` - as the signal that it is
+        now safe to reuse this game server for a new match.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              title: MatchZyDemoWindowEndEvent
+              allOf:
+                - "$ref": "#/components/schemas/MatchZyMapEvent"
+                - type: object
+                  properties:
+                    event:
+                      enum:
+                        - demo_window_end
   "MatchZyOnSidePicked":
     post:
       tags:

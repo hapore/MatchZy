@@ -69,6 +69,7 @@
   "matchzy.mm.filedoesntexist": "[LoadMatch] ¡El fichero proporcionado no existe! Uso: matchzy_loadmatch <nombre_del_fichero>",
   "matchzy.mm.matchloadfailed": "¡Error al cargar el fichero! Reiniciando la partida actual.",
   "matchzy.mm.get5matchisalreadysetup": "[LoadMatchDataCommand] Una partida ya ha sido creda con el id: {0}, ¡no se puede cargar una nueva partida!",
+  "matchzy.mm.demofinalizing": "[LoadMatch] La demo de la partida anterior todavía se está finalizando (el servidor aún no es seguro para reutilizar), ¡no se puede cargar una nueva partida todavía!",
   "matchzy.mm.invalidurl": "[LoadMatchDataCommand] URL inválida: {green}{0}{default}. Por favor, ¡proporciona una URL válida para cargar la partida!",
   "matchzy.mm.httprequestfailed": "[LoadMatchFromURL] Petición HTTP falló con código: {0}",
   "matchzy.mm.teamcannotbechanged": "¡Los nombres de los equipos no se pueden cambiar una vez la partida ha empezado!!",

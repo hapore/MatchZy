@@ -17,6 +17,12 @@ namespace MatchZy
 
         public bool isMatchSetup = false;
 
+        // true desde el fin de una serie hasta que cierra la ventana fija de
+        // finalizacion de demo (ver EndSeries() / GetDemoFinalizeWindowSeconds()).
+        // ResetMatch() NO lo toca a proposito: debe seguir bloqueando la carga de
+        // un match nuevo aunque isMatchSetup ya se haya limpiado.
+        public bool isFinalizingDemo = false;
+
         public bool matchModeOnly = false;
 
         public bool resetCvarsOnSeriesEnd = true;
@@ -56,6 +62,12 @@ namespace MatchZy
                     Log($"[LoadMatch] A match is already setup with id: {liveMatchId}, cannot load a new match!");
                     return;
                 }
+                if (isFinalizingDemo)
+                {
+                    ReplyToUserCommand(player, Localizer["matchzy.mm.demofinalizing"]);
+                    Log($"[LoadMatch] Previous match's demo is still finalizing, cannot load a new match yet!");
+                    return;
+                }
                 string fileName = command.ArgString;
                 string filePath = Path.Join(Server.GameDirectory + "/csgo", fileName);
                 if (!File.Exists(filePath)) 
@@ -92,6 +104,12 @@ namespace MatchZy
                 // command.ReplyToCommand($"[LoadMatchDataCommand] A match is already setup with id: {liveMatchId}, cannot load a new match!");
                 ReplyToUserCommand(player, Localizer["matchzy.mm.get5matchisalreadysetup", liveMatchId]);
                 Log($"[LoadMatchDataCommand] A match is already setup with id: {liveMatchId}, cannot load a new match!");
+                return;
+            }
+            if (isFinalizingDemo)
+            {
+                ReplyToUserCommand(player, Localizer["matchzy.mm.demofinalizing"]);
+                Log($"[LoadMatchDataCommand] Previous match's demo is still finalizing, cannot load a new match yet!");
                 return;
             }
             string url = command.ArgByIndex(1);
@@ -597,6 +615,7 @@ namespace MatchZy
         public void EndSeries(string? winnerName, int restartDelay, int t1score, int t2score)
         {
             long matchId = liveMatchId;
+            int finalMapNumber = matchConfig.CurrentMapNumber;
             (int team1Score, int team2Score) = (matchzyTeam1.seriesScore, matchzyTeam2.seriesScore);
             if (winnerName == null)
             {
@@ -627,6 +646,18 @@ namespace MatchZy
 
             if (resetCvarsOnSeriesEnd) ResetChangedConvars();
             isMatchLive = false;
+
+            // Ventana fija y deterministica (independiente de si la subida real de
+            // la demo termina bien, mal, o esta deshabilitada) durante la cual no
+            // se permite cargar un match nuevo. Ver GetDemoFinalizeWindowSeconds().
+            isFinalizingDemo = true;
+            float demoWindowDelay = GetDemoFinalizeWindowSeconds();
+            var demoWindowEndEvent = new MatchZyDemoWindowEndEvent { MatchId = matchId, MapNumber = finalMapNumber };
+            AddTimer(demoWindowDelay, () => {
+                isFinalizingDemo = false;
+                Task.Run(async () => await SendEventAsync(demoWindowEndEvent));
+            });
+
             AddTimer(restartDelay, () => {
                 ResetMatch(false);
             });

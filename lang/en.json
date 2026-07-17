@@ -69,6 +69,7 @@
   "matchzy.mm.filedoesntexist": "[LoadMatch] Provided file does not exist! Usage: matchzy_loadmatch <filename>",
   "matchzy.mm.matchloadfailed": "Match load failed! Resetting current match",
   "matchzy.mm.get5matchisalreadysetup": "[LoadMatchDataCommand] A match is already setup with id: {0}, cannot load a new match!",
+  "matchzy.mm.demofinalizing": "[LoadMatch] Previous match's demo is still finalizing (server not yet safe to reuse), cannot load a new match yet!",
   "matchzy.mm.invalidurl": "[LoadMatchDataCommand] Invalid URL: {green}{0}{default}. Please provide a valid URL to load the match!",
   "matchzy.mm.httprequestfailed": "[LoadMatchFromURL] HTTP request failed with status code: {0}",
   "matchzy.mm.teamcannotbechanged": "Team names cannot be changed once the match is started!",

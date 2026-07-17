@@ -186,6 +186,22 @@ Fin de la serie completa (BO1/BO3/BO5).
 }
 ```
 
+### `demo_window_end` *(custom — Hapore)*
+Se dispara una vez transcurrida una ventana fija y determinística desde el fin
+de la serie (`tv_delay` + flush + margen fijo de subida), **independientemente**
+de si la subida real de la demo (`demo_upload_ended`) terminó bien, mal, o
+está deshabilitada. Es la señal que debe usar el backend para saber que ya es
+seguro reutilizar este servidor para un match nuevo — no `series_end`, que solo
+indica que el *resultado* de la partida ya está definido.
+
+```json
+{
+  "event": "demo_window_end",
+  "matchid": 1777681966,
+  "map_number": 1
+}
+```
+
 ### `player_disconnect`
 Un jugador se desconectó del servidor.
 
@@ -269,7 +285,8 @@ series_start
     map_result              (map_number=1)
   ...
 series_end
-demo_upload_ended × num_maps_played
+demo_upload_ended × num_maps_played   (no sincronizado con demo_window_end)
+demo_window_end                       (una vez, ventana fija tras el fin de la serie)
 ```
 
 Si en cualquier punto se agota `matchzy_player_wait_timeout`, se emite:

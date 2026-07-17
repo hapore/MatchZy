@@ -22,6 +22,10 @@ namespace MatchZy
         public bool isDemoRecording = false;
         public bool isDemoRecordingEnabled = true;
 
+        // Margen fijo, no configurable, para cubrir la subida de la demo (no
+        // acotada pero empiricamente ~2min). Ver GetDemoFinalizeWindowSeconds().
+        public const float DemoFinalizeGraceSeconds = 120f;
+
         public void StartDemoRecording()
         {
             if (!isDemoRecordingEnabled)
@@ -135,6 +139,17 @@ namespace MatchZy
 
             if (tvDelay < tvDelay1) return tvDelay1;
             return tvDelay;
+        }
+
+        // Centraliza la formula de la ventana de finalizacion de la demo para que
+        // no pueda desincronizarse del schedule real de StopDemoRecording:
+        //   tv_stoprecord dispara en (tvFlushDelay - 0.5)
+        //   +15s mas antes de que arranque el Task.Run de upload
+        //   + margen fijo para cubrir la subida en si
+        public float GetDemoFinalizeWindowSeconds()
+        {
+            float tvFlushDelay = GetTvDelay() + 15f;
+            return (tvFlushDelay - 0.5f) + 15f + DemoFinalizeGraceSeconds;
         }
 
         [ConsoleCommand("get5_demo_upload_header_key", "If defined, a custom HTTP header with this name is added to the HTTP requests for demos")]

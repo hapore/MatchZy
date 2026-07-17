@@ -138,6 +138,18 @@ public class MatchZySeriesResultEvent : MatchZyMatchEvent
     }
 }
 
+// Se dispara una vez transcurrida una ventana fija y deterministica desde el
+// fin de la serie (ver EndSeries() en MatchManagement.cs), independientemente
+// de si la subida real de la demo (UploadFileAsync) termino bien, mal, o esta
+// deshabilitada. Es la senal que consume el backend para saber que ya es
+// seguro reutilizar este servidor para un match nuevo.
+public class MatchZyDemoWindowEndEvent : MatchZyMapEvent
+{
+    public MatchZyDemoWindowEndEvent() : base("demo_window_end")
+    {
+    }
+}
+
 public class GoingLiveEvent : MatchZyMapEvent
 {
     public GoingLiveEvent() : base("going_live")
