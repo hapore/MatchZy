@@ -138,6 +138,15 @@ namespace MatchZy
             isDemoRecordingEnabled = bool.TryParse(args, out bool isDemoRecordingEnabledValue) ? isDemoRecordingEnabledValue : args != "0" && isDemoRecordingEnabled;
         }
 
+        [ConsoleCommand("matchzy_stats_direct_save_enabled", "Whether MatchZy writes match stats directly to its own DB tables (matchzy_stats_matches/maps/players) in addition to sending the round_end/map_result/series_end webhooks. Disable when an external service is the primary consumer of these webhooks. Default value: true")]
+        public void MatchZyStatsDirectSaveEnabled(CCSPlayerController? player, CommandInfo command)
+        {
+            if (player != null) return;
+            string args = command.ArgString;
+
+            isStatsDirectSaveEnabled = bool.TryParse(args, out bool isStatsDirectSaveEnabledValue) ? isStatsDirectSaveEnabledValue : args != "0" && isStatsDirectSaveEnabled;
+        }
+
         [ConsoleCommand("get5_demo_upload_url", "If defined, recorded demos will be uploaded to this URL once the map ends.")]
         [ConsoleCommand("matchzy_demo_upload_url", "If defined, recorded demos will be uploaded to this URL once the map ends.")]
         public void MatchZyDemoUploadURL(CCSPlayerController? player, CommandInfo command)

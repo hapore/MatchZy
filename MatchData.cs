@@ -124,11 +124,75 @@ public class PlayerStats
     [JsonPropertyName("kast")]
     public int Kast { get; set; }
 
+    // true si el jugador tuvo K/A/S/T en ESTA ronda puntual (a diferencia de
+    // "kast" arriba, que es un porcentaje acumulado del mapa). Necesario porque
+    // "kast" no es diffeable entre rondas consecutivas (es un promedio redondeado
+    // sobre un denominador que crece cada ronda, no un conteo crudo).
+    [JsonPropertyName("kast_this_round")]
+    public bool KastThisRound { get; set; }
+
     [JsonPropertyName("score")]
     public int Score { get; set; }
 
     [JsonPropertyName("mvp")]
     public int Mvps { get; set; }
+
+    // Columnas que ya existen en matchzy_stats_players y que GetPlayerStatsDict
+    // ya lee de player.ActionTrackingServices.MatchStats, pero que hasta ahora
+    // nunca se copiaban a este DTO (por lo tanto nunca viajaban en el webhook).
+    [JsonPropertyName("utility_count")]
+    public int UtilityCount { get; set; }
+
+    [JsonPropertyName("utility_successes")]
+    public int UtilitySuccesses { get; set; }
+
+    [JsonPropertyName("utility_enemies")]
+    public int UtilityEnemies { get; set; }
+
+    [JsonPropertyName("flash_count")]
+    public int FlashCount { get; set; }
+
+    [JsonPropertyName("flash_successes")]
+    public int FlashSuccesses { get; set; }
+
+    [JsonPropertyName("health_points_removed_total")]
+    public int HealthPointsRemovedTotal { get; set; }
+
+    [JsonPropertyName("health_points_dealt_total")]
+    public int HealthPointsDealtTotal { get; set; }
+
+    [JsonPropertyName("shots_fired_total")]
+    public int ShotsFiredTotal { get; set; }
+
+    [JsonPropertyName("shots_on_target_total")]
+    public int ShotsOnTargetTotal { get; set; }
+
+    [JsonPropertyName("v1_count")]
+    public int V1Count { get; set; }
+
+    [JsonPropertyName("v2_count")]
+    public int V2Count { get; set; }
+
+    [JsonPropertyName("entry_count")]
+    public int EntryCount { get; set; }
+
+    [JsonPropertyName("entry_wins")]
+    public int EntryWins { get; set; }
+
+    [JsonPropertyName("equipment_value")]
+    public int EquipmentValue { get; set; }
+
+    [JsonPropertyName("money_saved")]
+    public int MoneySaved { get; set; }
+
+    [JsonPropertyName("kill_reward")]
+    public int KillReward { get; set; }
+
+    [JsonPropertyName("live_time")]
+    public int LiveTime { get; set; }
+
+    [JsonPropertyName("cash_earned")]
+    public int CashEarned { get; set; }
 }
 
 public class MatchZyTeamWrapper

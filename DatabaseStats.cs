@@ -215,6 +215,73 @@ namespace MatchZy
             {
                 Log($"[CreateRequiredTablesSQLite - FATAL] matchzy_stats_players: {ex.Message}");
             }
+
+            // matchzy_stats_players_rounds: historial de stats DELTA por ronda,
+            // usado por el backend externo (matchController.ts, handleRoundEnd)
+            // para reflejar el estado del match en vivo en el frontend. El plugin
+            // solo provisiona la tabla acá (idempotente, IF NOT EXISTS) - NUNCA
+            // escribe filas en ella, eso es responsabilidad exclusiva del backend
+            // via el webhook round_end. `kast` acá es el booleano crudo
+            // kast_this_round (0/1), no el porcentaje acumulado de
+            // matchzy_stats_players.kast.
+            try
+            {
+                connection.Execute(@"
+                CREATE TABLE IF NOT EXISTS matchzy_stats_players_rounds (
+                    matchid INTEGER NOT NULL,
+                    mapnumber INTEGER NOT NULL,
+                    round_number INTEGER NOT NULL,
+                    steamid64 INTEGER NOT NULL,
+                    team TEXT NOT NULL DEFAULT '',
+                    name TEXT NOT NULL DEFAULT '',
+                    kills INTEGER NOT NULL DEFAULT 0,
+                    deaths INTEGER NOT NULL DEFAULT 0,
+                    damage INTEGER NOT NULL DEFAULT 0,
+                    assists INTEGER NOT NULL DEFAULT 0,
+                    enemy5ks INTEGER NOT NULL DEFAULT 0,
+                    enemy4ks INTEGER NOT NULL DEFAULT 0,
+                    enemy3ks INTEGER NOT NULL DEFAULT 0,
+                    enemy2ks INTEGER NOT NULL DEFAULT 0,
+                    utility_count INTEGER NOT NULL DEFAULT 0,
+                    utility_damage INTEGER NOT NULL DEFAULT 0,
+                    utility_successes INTEGER NOT NULL DEFAULT 0,
+                    utility_enemies INTEGER NOT NULL DEFAULT 0,
+                    flash_count INTEGER NOT NULL DEFAULT 0,
+                    flash_successes INTEGER NOT NULL DEFAULT 0,
+                    health_points_removed_total INTEGER NOT NULL DEFAULT 0,
+                    health_points_dealt_total INTEGER NOT NULL DEFAULT 0,
+                    shots_fired_total INTEGER NOT NULL DEFAULT 0,
+                    shots_on_target_total INTEGER NOT NULL DEFAULT 0,
+                    v1_count INTEGER NOT NULL DEFAULT 0,
+                    v1_wins INTEGER NOT NULL DEFAULT 0,
+                    v2_count INTEGER NOT NULL DEFAULT 0,
+                    v2_wins INTEGER NOT NULL DEFAULT 0,
+                    entry_count INTEGER NOT NULL DEFAULT 0,
+                    entry_wins INTEGER NOT NULL DEFAULT 0,
+                    equipment_value INTEGER NOT NULL DEFAULT 0,
+                    money_saved INTEGER NOT NULL DEFAULT 0,
+                    kill_reward INTEGER NOT NULL DEFAULT 0,
+                    live_time INTEGER NOT NULL DEFAULT 0,
+                    head_shot_kills INTEGER NOT NULL DEFAULT 0,
+                    cash_earned INTEGER NOT NULL DEFAULT 0,
+                    enemies_flashed INTEGER NOT NULL DEFAULT 0,
+                    flash_assists INTEGER NOT NULL DEFAULT 0,
+                    friendlies_flashed INTEGER NOT NULL DEFAULT 0,
+                    knife_kills INTEGER NOT NULL DEFAULT 0,
+                    bomb_plants INTEGER NOT NULL DEFAULT 0,
+                    bomb_defuses INTEGER NOT NULL DEFAULT 0,
+                    kast INTEGER NOT NULL DEFAULT 0,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (matchid, mapnumber, round_number, steamid64),
+                    FOREIGN KEY (matchid) REFERENCES matchzy_stats_matches (matchid),
+                    FOREIGN KEY (matchid, mapnumber) REFERENCES matchzy_stats_maps (matchid, mapnumber)
+                )");
+                Log("[CreateRequiredTablesSQLite] matchzy_stats_players_rounds OK");
+            }
+            catch (Exception ex)
+            {
+                Log($"[CreateRequiredTablesSQLite - FATAL] matchzy_stats_players_rounds: {ex.Message}");
+            }
         }
 
         public void CreateRequiredTablesSQL()
@@ -319,6 +386,74 @@ namespace MatchZy
             catch (Exception ex)
             {
                 Log($"[CreateRequiredTablesSQL - FATAL] matchzy_stats_players: {ex.Message}");
+            }
+
+            // matchzy_stats_players_rounds: historial de stats DELTA por ronda,
+            // usado por el backend externo (matchController.ts, handleRoundEnd)
+            // para reflejar el estado del match en vivo en el frontend. El plugin
+            // solo provisiona la tabla acá (idempotente, IF NOT EXISTS) - NUNCA
+            // escribe filas en ella, eso es responsabilidad exclusiva del backend
+            // via el webhook round_end. `kast` acá es el booleano crudo
+            // kast_this_round (0/1), no el porcentaje acumulado de
+            // matchzy_stats_players.kast.
+            try
+            {
+                connection.Execute($@"
+                CREATE TABLE IF NOT EXISTS matchzy_stats_players_rounds (
+                    matchid INT NOT NULL,
+                    mapnumber TINYINT(3) UNSIGNED NOT NULL,
+                    round_number SMALLINT UNSIGNED NOT NULL,
+                    steamid64 BIGINT NOT NULL,
+                    team VARCHAR(255) NOT NULL DEFAULT '',
+                    name VARCHAR(255) NOT NULL DEFAULT '',
+                    kills INT NOT NULL DEFAULT 0,
+                    deaths INT NOT NULL DEFAULT 0,
+                    damage INT NOT NULL DEFAULT 0,
+                    assists INT NOT NULL DEFAULT 0,
+                    enemy5ks INT NOT NULL DEFAULT 0,
+                    enemy4ks INT NOT NULL DEFAULT 0,
+                    enemy3ks INT NOT NULL DEFAULT 0,
+                    enemy2ks INT NOT NULL DEFAULT 0,
+                    utility_count INT NOT NULL DEFAULT 0,
+                    utility_damage INT NOT NULL DEFAULT 0,
+                    utility_successes INT NOT NULL DEFAULT 0,
+                    utility_enemies INT NOT NULL DEFAULT 0,
+                    flash_count INT NOT NULL DEFAULT 0,
+                    flash_successes INT NOT NULL DEFAULT 0,
+                    health_points_removed_total INT NOT NULL DEFAULT 0,
+                    health_points_dealt_total INT NOT NULL DEFAULT 0,
+                    shots_fired_total INT NOT NULL DEFAULT 0,
+                    shots_on_target_total INT NOT NULL DEFAULT 0,
+                    v1_count INT NOT NULL DEFAULT 0,
+                    v1_wins INT NOT NULL DEFAULT 0,
+                    v2_count INT NOT NULL DEFAULT 0,
+                    v2_wins INT NOT NULL DEFAULT 0,
+                    entry_count INT NOT NULL DEFAULT 0,
+                    entry_wins INT NOT NULL DEFAULT 0,
+                    equipment_value INT NOT NULL DEFAULT 0,
+                    money_saved INT NOT NULL DEFAULT 0,
+                    kill_reward INT NOT NULL DEFAULT 0,
+                    live_time INT NOT NULL DEFAULT 0,
+                    head_shot_kills INT NOT NULL DEFAULT 0,
+                    cash_earned INT NOT NULL DEFAULT 0,
+                    enemies_flashed INT NOT NULL DEFAULT 0,
+                    flash_assists INT NOT NULL DEFAULT 0,
+                    friendlies_flashed INT NOT NULL DEFAULT 0,
+                    knife_kills INT NOT NULL DEFAULT 0,
+                    bomb_plants INT NOT NULL DEFAULT 0,
+                    bomb_defuses INT NOT NULL DEFAULT 0,
+                    kast INT NOT NULL DEFAULT 0,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (matchid, mapnumber, round_number, steamid64),
+                    INDEX round_match_map_index (matchid, mapnumber),
+                    CONSTRAINT fk_players_rounds_map_ref FOREIGN KEY (matchid, mapnumber)
+                        REFERENCES matchzy_stats_maps (matchid, mapnumber)
+                )");
+                Log("[CreateRequiredTablesSQL] matchzy_stats_players_rounds OK");
+            }
+            catch (Exception ex)
+            {
+                Log($"[CreateRequiredTablesSQL - FATAL] matchzy_stats_players_rounds: {ex.Message}");
             }
         }
 

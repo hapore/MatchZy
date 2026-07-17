@@ -391,6 +391,12 @@ namespace MatchZy
             string statsBackupRoot = GetStatsBackupRoot();
             string matchStatsCsvPath = Server.GameDirectory + "/csgo/MatchZy_Stats/" + matchId;
 
+            // Override explicito del admin: toca la BD sin importar
+            // isStatsDirectSaveEnabled, por eso necesita inicializarla acá
+            // (puede que nunca se haya abierto la conexion si el guardado
+            // directo estuvo apagado toda la partida).
+            EnsureDatabaseInitialized();
+
             Task.Run(async () =>
             {
                 List<int> mapNumbers = mapNumberFilter.HasValue

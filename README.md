@@ -40,6 +40,143 @@ Stopping GOTV and uploading the demo after a series ends can take up to ~2 minut
 * **`isFinalizingDemo` guard**: set to `true` in `EndSeries()` for a fixed, deterministic window (`tv_delay` flush + a fixed upload grace period — not tied to whether the actual upload succeeds, fails, or is disabled) and checked by both `matchzy_loadmatch` and `matchzy_loadmatch_url`. While it's active, any attempt to load a new match is rejected with a clear log/chat message instead of silently racing the in-progress demo.
 * **`demo_window_end` event**: once that fixed window closes, the plugin emits a `demo_window_end` webhook event (`matchzy_remote_log_url`) with `matchid`/`map_number`. This is the event an external backend/panel should use to know it's safe to reuse the server for a new match — **not** `series_end`, which only signals that the match *result* is final, and **not** `demo_upload_ended`, since the real upload duration isn't bounded. See [Events.md](Events.md) for the full payload.
 
+## Database Schema
+
+MatchZy auto-creates the 4 tables below on first connect (`CREATE TABLE IF NOT EXISTS`, both the MySQL and SQLite code paths in `DatabaseStats.cs`), so manual setup is normally unnecessary. This DDL (MySQL dialect) is provided for cases where you want to provision the schema ahead of time — e.g. pointing an external consumer (like a backend/panel) at the database before the plugin has ever connected.
+
+* `matchzy_stats_matches`, `matchzy_stats_maps`, `matchzy_stats_players` — written directly by the plugin whenever `matchzy_stats_direct_save_enabled` is `1` (the default). See [Stats Backup & Recovery](#stats-backup--recovery) above.
+* `matchzy_stats_players_rounds` — **the plugin only creates this table, it never writes rows to it.** Per-round delta stats are populated exclusively by an external consumer processing the `round_end` webhook (see [Events.md](Events.md)) — this is what lets a panel/backend reflect live match state without waiting for the map to end. `kast` here is the raw per-round `kast_this_round` boolean (0/1), **not** the cumulative percentage stored in `matchzy_stats_players.kast`.
+
+```sql
+CREATE TABLE IF NOT EXISTS matchzy_stats_matches (
+    matchid INT PRIMARY KEY AUTO_INCREMENT,
+    start_time DATETIME NOT NULL,
+    end_time DATETIME DEFAULT NULL,
+    winner VARCHAR(255) NOT NULL DEFAULT '',
+    series_type VARCHAR(255) NOT NULL DEFAULT '',
+    team1_name VARCHAR(255) NOT NULL DEFAULT '',
+    team1_score INT NOT NULL DEFAULT 0,
+    team2_name VARCHAR(255) NOT NULL DEFAULT '',
+    team2_score INT NOT NULL DEFAULT 0,
+    server_ip VARCHAR(255) NOT NULL DEFAULT '0'
+);
+
+CREATE TABLE IF NOT EXISTS matchzy_stats_maps (
+    matchid INT NOT NULL,
+    mapnumber TINYINT(3) UNSIGNED NOT NULL,
+    start_time DATETIME NOT NULL,
+    end_time DATETIME DEFAULT NULL,
+    winner VARCHAR(255) NOT NULL DEFAULT '',
+    mapname VARCHAR(255) NOT NULL DEFAULT '',
+    team1_score INT NOT NULL DEFAULT 0,
+    team2_score INT NOT NULL DEFAULT 0,
+    PRIMARY KEY (matchid, mapnumber),
+    INDEX mapnumber_index (mapnumber),
+    CONSTRAINT fk_maps_matchid FOREIGN KEY (matchid) REFERENCES matchzy_stats_matches (matchid)
+);
+
+CREATE TABLE IF NOT EXISTS matchzy_stats_players (
+    matchid INT NOT NULL,
+    mapnumber TINYINT(3) UNSIGNED NOT NULL,
+    steamid64 BIGINT NOT NULL,
+    team VARCHAR(255) NOT NULL DEFAULT '',
+    name VARCHAR(255) NOT NULL,
+    kills INT NOT NULL,
+    deaths INT NOT NULL,
+    damage INT NOT NULL,
+    assists INT NOT NULL,
+    enemy5ks INT NOT NULL,
+    enemy4ks INT NOT NULL,
+    enemy3ks INT NOT NULL,
+    enemy2ks INT NOT NULL,
+    utility_count INT NOT NULL,
+    utility_damage INT NOT NULL,
+    utility_successes INT NOT NULL,
+    utility_enemies INT NOT NULL,
+    flash_count INT NOT NULL,
+    flash_successes INT NOT NULL,
+    health_points_removed_total INT NOT NULL,
+    health_points_dealt_total INT NOT NULL,
+    shots_fired_total INT NOT NULL,
+    shots_on_target_total INT NOT NULL,
+    v1_count INT NOT NULL,
+    v1_wins INT NOT NULL,
+    v2_count INT NOT NULL,
+    v2_wins INT NOT NULL,
+    entry_count INT NOT NULL,
+    entry_wins INT NOT NULL,
+    equipment_value INT NOT NULL,
+    money_saved INT NOT NULL,
+    kill_reward INT NOT NULL,
+    live_time INT NOT NULL,
+    head_shot_kills INT NOT NULL,
+    cash_earned INT NOT NULL,
+    enemies_flashed INT NOT NULL,
+    flash_assists INT NOT NULL DEFAULT 0,
+    friendlies_flashed INT NOT NULL DEFAULT 0,
+    knife_kills INT NOT NULL DEFAULT 0,
+    bomb_plants INT NOT NULL DEFAULT 0,
+    bomb_defuses INT NOT NULL DEFAULT 0,
+    kast INT NOT NULL DEFAULT 0,
+    PRIMARY KEY (matchid, mapnumber, steamid64),
+    CONSTRAINT fk_players_map_ref FOREIGN KEY (matchid, mapnumber)
+        REFERENCES matchzy_stats_maps (matchid, mapnumber)
+);
+
+CREATE TABLE IF NOT EXISTS matchzy_stats_players_rounds (
+    matchid INT NOT NULL,
+    mapnumber TINYINT(3) UNSIGNED NOT NULL,
+    round_number SMALLINT UNSIGNED NOT NULL,
+    steamid64 BIGINT NOT NULL,
+    team VARCHAR(255) NOT NULL DEFAULT '',
+    name VARCHAR(255) NOT NULL DEFAULT '',
+    kills INT NOT NULL DEFAULT 0,
+    deaths INT NOT NULL DEFAULT 0,
+    damage INT NOT NULL DEFAULT 0,
+    assists INT NOT NULL DEFAULT 0,
+    enemy5ks INT NOT NULL DEFAULT 0,
+    enemy4ks INT NOT NULL DEFAULT 0,
+    enemy3ks INT NOT NULL DEFAULT 0,
+    enemy2ks INT NOT NULL DEFAULT 0,
+    utility_count INT NOT NULL DEFAULT 0,
+    utility_damage INT NOT NULL DEFAULT 0,
+    utility_successes INT NOT NULL DEFAULT 0,
+    utility_enemies INT NOT NULL DEFAULT 0,
+    flash_count INT NOT NULL DEFAULT 0,
+    flash_successes INT NOT NULL DEFAULT 0,
+    health_points_removed_total INT NOT NULL DEFAULT 0,
+    health_points_dealt_total INT NOT NULL DEFAULT 0,
+    shots_fired_total INT NOT NULL DEFAULT 0,
+    shots_on_target_total INT NOT NULL DEFAULT 0,
+    v1_count INT NOT NULL DEFAULT 0,
+    v1_wins INT NOT NULL DEFAULT 0,
+    v2_count INT NOT NULL DEFAULT 0,
+    v2_wins INT NOT NULL DEFAULT 0,
+    entry_count INT NOT NULL DEFAULT 0,
+    entry_wins INT NOT NULL DEFAULT 0,
+    equipment_value INT NOT NULL DEFAULT 0,
+    money_saved INT NOT NULL DEFAULT 0,
+    kill_reward INT NOT NULL DEFAULT 0,
+    live_time INT NOT NULL DEFAULT 0,
+    head_shot_kills INT NOT NULL DEFAULT 0,
+    cash_earned INT NOT NULL DEFAULT 0,
+    enemies_flashed INT NOT NULL DEFAULT 0,
+    flash_assists INT NOT NULL DEFAULT 0,
+    friendlies_flashed INT NOT NULL DEFAULT 0,
+    knife_kills INT NOT NULL DEFAULT 0,
+    bomb_plants INT NOT NULL DEFAULT 0,
+    bomb_defuses INT NOT NULL DEFAULT 0,
+    kast INT NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (matchid, mapnumber, round_number, steamid64),
+    INDEX round_match_map_index (matchid, mapnumber),
+    CONSTRAINT fk_players_rounds_map_ref FOREIGN KEY (matchid, mapnumber)
+        REFERENCES matchzy_stats_maps (matchid, mapnumber)
+);
+```
+
+> The SQLite code path creates the exact same columns/keys using SQLite-native syntax (`INTEGER PRIMARY KEY AUTOINCREMENT`, no `TINYINT(3) UNSIGNED`/`INDEX name (...)` clauses) — see `CreateRequiredTablesSQLite` in `DatabaseStats.cs` if you need that dialect verbatim.
+
 ## Documentation
 
 ## [shobhit-pathak.github.io/MatchZy/](https://shobhit-pathak.github.io/MatchZy/)

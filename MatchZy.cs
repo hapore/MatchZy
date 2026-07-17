@@ -135,15 +135,37 @@ namespace MatchZy
         // User command - action map
         public Dictionary<string, Action<CCSPlayerController?, CommandInfo?>>? commandActions;
 
-        // SQLite/MySQL Database 
+        // SQLite/MySQL Database
         private Database database = new();
+
+        // Cuando es false, el plugin deja de escribir directo a matchzy_stats_matches/
+        // maps/players (y de generar el backup JSON por ronda), delegando el guardado
+        // por completo a quien consuma los webhooks (matchzy_remote_log_url). Los
+        // eventos siguen enviandose siempre, sin importar este flag. Ver
+        // matchzy_stats_direct_save_enabled en ConfigConvars.cs.
+        public bool isStatsDirectSaveEnabled = true;
+
+        // true una vez que se abrio la conexion a la BD y se crearon las tablas.
+        // Ver EnsureDatabaseInitialized(): la conexion NO se abre en Load() a
+        // proposito (eso pasaria siempre, sin importar isStatsDirectSaveEnabled,
+        // porque los cvars de warmup.cfg/match config todavia no se ejecutaron en
+        // ese punto), sino recien en el primer uso real de `database`, momento en
+        // el que isStatsDirectSaveEnabled ya tiene su valor final para el match/
+        // sesion en curso. Asi, si el cvar esta en 0, el plugin no abre ninguna
+        // conexion ni toca la BD en absoluto.
+        private bool isDatabaseInitialized = false;
+
+        private void EnsureDatabaseInitialized()
+        {
+            if (isDatabaseInitialized) return;
+            database.InitializeDatabase(ModuleDirectory);
+            isDatabaseInitialized = true;
+        }
 
         public override void Load(bool hotReload)
         {
 
             LoadAdmins();
-
-            database.InitializeDatabase(ModuleDirectory);
 
             // This sets default config ConVars
             Server.ExecuteCommand("execifexists MatchZy/config.cfg");

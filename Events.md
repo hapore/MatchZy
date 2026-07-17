@@ -158,6 +158,21 @@ Fin de ronda con stats agregados de cada equipo.
 }
 ```
 
+Cada jugador en `players[].stats` es **acumulado por mapa** (no un delta de la
+ronda), con dos excepciones/agregados a tener en cuenta:
+
+- `kast` es un **porcentaje redondeado** (`rondas con K/A/S/T / rondas jugadas * 100`),
+  no un conteo crudo — restarlo entre rondas consecutivas NO da un delta válido.
+- `kast_this_round` (booleano) sí es puntual de esta ronda: indica si el jugador
+  tuvo K/A/S/T en ESTA ronda específica. Es el campo a usar para reconstruir
+  historial por ronda, en vez de diffear `kast`.
+- Además de los campos ya documentados, `stats` también incluye: `utility_count`,
+  `utility_successes`, `utility_enemies`, `flash_count`, `flash_successes`,
+  `health_points_removed_total`, `health_points_dealt_total`, `shots_fired_total`,
+  `shots_on_target_total`, `v1_count`, `v2_count`, `entry_count`, `entry_wins`,
+  `equipment_value`, `money_saved`, `kill_reward`, `live_time`, `cash_earned`
+  (todos acumulados por mapa, igual que el resto).
+
 ### `map_result`
 Fin de mapa con el resultado final del mapa.
 

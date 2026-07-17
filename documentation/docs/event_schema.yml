@@ -610,6 +610,85 @@ components:
           minimum: 0
           description: "The number of times the player was elected the round MVP."
           example: 4
+        kast_this_round:
+          type: boolean
+          description: |
+            Whether the player satisfied KAST (Kill/Assist/Survive/Traded) in this specific round.
+            Unlike `kast` above (a cumulative rounded percentage), this is a per-round boolean and
+            is safe to use for reconstructing round-by-round history - diffing `kast` between
+            consecutive rounds does NOT yield a valid delta.
+        utility_count:
+          type: integer
+          minimum: 0
+          description: "The total number of utility grenades thrown by the player."
+        utility_successes:
+          type: integer
+          minimum: 0
+          description: "The number of utility grenades thrown that had an effect (flash/damage/etc.) on an enemy."
+        utility_enemies:
+          type: integer
+          minimum: 0
+          description: "The number of distinct enemies affected by the player's utility."
+        flash_count:
+          type: integer
+          minimum: 0
+          description: "The total number of flashbangs thrown by the player."
+        flash_successes:
+          type: integer
+          minimum: 0
+          description: "The number of flashbangs that blinded at least one enemy."
+        health_points_removed_total:
+          type: integer
+          minimum: 0
+          description: "Total health points removed from enemies by the player."
+        health_points_dealt_total:
+          type: integer
+          minimum: 0
+          description: "Total health points of damage dealt by the player (including friendly fire)."
+        shots_fired_total:
+          type: integer
+          minimum: 0
+          description: "Total number of shots fired by the player."
+        shots_on_target_total:
+          type: integer
+          minimum: 0
+          description: "Total number of shots that hit an enemy."
+        v1_count:
+          type: integer
+          minimum: 0
+          description: "The number of 1vX clutch situations the player faced with exactly 1 opponent remaining."
+        v2_count:
+          type: integer
+          minimum: 0
+          description: "The number of 1vX clutch situations the player faced with exactly 2 opponents remaining."
+        entry_count:
+          type: integer
+          minimum: 0
+          description: "The number of rounds where the player attempted an entry (first pick of the round)."
+        entry_wins:
+          type: integer
+          minimum: 0
+          description: "The number of entry attempts that resulted in the player getting the first kill."
+        equipment_value:
+          type: integer
+          minimum: 0
+          description: "The total value of equipment the player has bought."
+        money_saved:
+          type: integer
+          minimum: 0
+          description: "The total amount of money the player saved by not buying/dropping weapons."
+        kill_reward:
+          type: integer
+          minimum: 0
+          description: "The total cash reward the player earned from kills."
+        live_time:
+          type: integer
+          minimum: 0
+          description: "The total time (in seconds) the player spent alive during rounds."
+        cash_earned:
+          type: integer
+          minimum: 0
+          description: "The total cash the player earned over the match."
     MatchZyDemoFileEvent:
       allOf:
         - "$ref": "#/components/schemas/MatchZyMapEvent"

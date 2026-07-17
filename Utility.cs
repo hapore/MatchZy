@@ -1189,10 +1189,14 @@ namespace MatchZy
 
             HandleClanTags();
 
-            Log("[HandleMatchStart] InitMatch in DB");
             string seriesType = "BO" + matchConfig.NumMaps.ToString();
-            liveMatchId = database.InitMatch(matchzyTeam1.teamName, matchzyTeam2.teamName, "-", isMatchSetup, liveMatchId, matchConfig.CurrentMapNumber, seriesType, matchConfig);
-            Log($"[HandleMatchStart] InitMatch OK liveMatchId={liveMatchId}");
+            if (isStatsDirectSaveEnabled)
+            {
+                EnsureDatabaseInitialized();
+                Log("[HandleMatchStart] InitMatch in DB");
+                liveMatchId = database.InitMatch(matchzyTeam1.teamName, matchzyTeam2.teamName, "-", isMatchSetup, liveMatchId, matchConfig.CurrentMapNumber, seriesType, matchConfig);
+                Log($"[HandleMatchStart] InitMatch OK liveMatchId={liveMatchId}");
+            }
             SetupRoundBackupFile();
             Log("[HandleMatchStart] SetupRoundBackupFile OK, SKIPPING GetSpawns (only needed for .spawn practice command)");
             // GetSpawns() solo se necesita para el comando .spawn N en
@@ -1344,39 +1348,44 @@ namespace MatchZy
                 }
 
                 await SendEventAsync(mapResultEvent);
-                await database.SetMapEndData(matchId, currentMapNumber, winnerName, t1score, t2score, team1SeriesScore, team2SeriesScore);
-                await database.WritePlayerStatsToCsv(statsPath, matchId, currentMapNumber);
 
-                // Red de seguridad de segundo nivel: si a pesar de lo anterior las
-                // filas de matchzy_stats_players no quedaron completas (ej. la BD
-                // estuvo caida durante la ronda final), reintentar automaticamente
-                // desde el backup en disco, sin intervencion manual.
-                if (expectedPlayers > 0)
+                if (isStatsDirectSaveEnabled)
                 {
-                    int actualRows = await database.CountPlayerStatsRows(matchId, currentMapNumber);
-                    if (actualRows < expectedPlayers)
-                    {
-                        Log($"[HandleMatchEnd] Mismatch de stats para matchId {matchId} mapNumber {currentMapNumber}: esperados {expectedPlayers}, encontrados {actualRows}. Reintentando automaticamente...");
-                        bool recovered = false;
-                        for (int attempt = 1; attempt <= 3 && !recovered; attempt++)
-                        {
-                            await Task.Delay(attempt * 1000);
-                            (bool success, _, string message) = await RetryStatsFromBackup(matchId, currentMapNumber, statsBackupRoot, statsPath);
-                            actualRows = await database.CountPlayerStatsRows(matchId, currentMapNumber);
-                            recovered = success && actualRows >= expectedPlayers;
-                            if (!success)
-                            {
-                                Log($"[HandleMatchEnd] Intento {attempt} de auto-reintento fallo para matchId {matchId} mapNumber {currentMapNumber}: {message}");
-                            }
-                        }
+                    EnsureDatabaseInitialized();
+                    await database.SetMapEndData(matchId, currentMapNumber, winnerName, t1score, t2score, team1SeriesScore, team2SeriesScore);
+                    await database.WritePlayerStatsToCsv(statsPath, matchId, currentMapNumber);
 
-                        if (recovered)
+                    // Red de seguridad de segundo nivel: si a pesar de lo anterior las
+                    // filas de matchzy_stats_players no quedaron completas (ej. la BD
+                    // estuvo caida durante la ronda final), reintentar automaticamente
+                    // desde el backup en disco, sin intervencion manual.
+                    if (expectedPlayers > 0)
+                    {
+                        int actualRows = await database.CountPlayerStatsRows(matchId, currentMapNumber);
+                        if (actualRows < expectedPlayers)
                         {
-                            Log($"[HandleMatchEnd] Auto-reintento exitoso para matchId {matchId} mapNumber {currentMapNumber} ({actualRows} filas).");
-                        }
-                        else
-                        {
-                            Log($"[HandleMatchEnd FATAL] Auto-reintento agotado para matchId {matchId} mapNumber {currentMapNumber} ({actualRows}/{expectedPlayers} filas). Ejecutar manualmente: matchzy_retry_stats {matchId} {currentMapNumber}");
+                            Log($"[HandleMatchEnd] Mismatch de stats para matchId {matchId} mapNumber {currentMapNumber}: esperados {expectedPlayers}, encontrados {actualRows}. Reintentando automaticamente...");
+                            bool recovered = false;
+                            for (int attempt = 1; attempt <= 3 && !recovered; attempt++)
+                            {
+                                await Task.Delay(attempt * 1000);
+                                (bool success, _, string message) = await RetryStatsFromBackup(matchId, currentMapNumber, statsBackupRoot, statsPath);
+                                actualRows = await database.CountPlayerStatsRows(matchId, currentMapNumber);
+                                recovered = success && actualRows >= expectedPlayers;
+                                if (!success)
+                                {
+                                    Log($"[HandleMatchEnd] Intento {attempt} de auto-reintento fallo para matchId {matchId} mapNumber {currentMapNumber}: {message}");
+                                }
+                            }
+
+                            if (recovered)
+                            {
+                                Log($"[HandleMatchEnd] Auto-reintento exitoso para matchId {matchId} mapNumber {currentMapNumber} ({actualRows} filas).");
+                            }
+                            else
+                            {
+                                Log($"[HandleMatchEnd FATAL] Auto-reintento agotado para matchId {matchId} mapNumber {currentMapNumber} ({actualRows}/{expectedPlayers} filas). Ejecutar manualmente: matchzy_retry_stats {matchId} {currentMapNumber}");
+                            }
                         }
                     }
                 }
@@ -1601,15 +1610,23 @@ namespace MatchZy
                     // envio del webhook o la escritura a la BD fallen. A diferencia del
                     // backup de restauracion (CreateMatchZyRoundDataBackup, disparado en
                     // RoundStart), este se dispara en RoundEnd y por eso si cubre la
-                    // ultima ronda jugada. Ver StatsBackup.cs.
-                    CreateRoundStatsBackup(roundEndEvent, playerStatsDictionary);
+                    // ultima ronda jugada. Ver StatsBackup.cs. No tiene sentido respaldar
+                    // hacia una BD local que no se esta usando.
+                    if (isStatsDirectSaveEnabled)
+                    {
+                        CreateRoundStatsBackup(roundEndEvent, playerStatsDictionary);
+                    }
 
                     _lastRoundExpectedPlayerCount = playerStatsListTeam1.Count + playerStatsListTeam2.Count;
                     _lastRoundStatsTask = Task.Run(async () =>
                     {
                         await SendEventAsync(roundEndEvent);
-                        await database.UpdatePlayerStatsAsync(matchId, currentMapNumber, playerStatsDictionary);
-                        await database.UpdateMapStatsAsync(matchId, currentMapNumber, t1score, t2score);
+                        if (isStatsDirectSaveEnabled)
+                        {
+                            EnsureDatabaseInitialized();
+                            await database.UpdatePlayerStatsAsync(matchId, currentMapNumber, playerStatsDictionary);
+                            await database.UpdateMapStatsAsync(matchId, currentMapNumber, t1score, t2score);
+                        }
                     });
 
                     string round = GetRoundNumer().ToString("D2");
@@ -2219,6 +2236,7 @@ namespace MatchZy
                     playerBombDefuses.TryGetValue(steamid64, out int bombDefuses);
                     kastRoundsContributed.TryGetValue(steamid64, out int kastRounds);
                     int kastPercent = roundsPlayed > 0 ? (int)Math.Round((double)kastRounds / roundsPlayed * 100) : 0;
+                    bool kastThisRound = kastFlags.TryGetValue(steamid64, out HashSet<string>? flagsForPlayer) && flagsForPlayer.Count > 0;
 
                     // Persist new tracked stats in the dictionary used by the DB layer
                     stats["FlashAssists"] = flashAssists;
@@ -2261,8 +2279,27 @@ namespace MatchZy
                         FirstDeathsCT = 0,
                         TradeKills = 0,
                         Kast = kastPercent,
+                        KastThisRound = kastThisRound,
                         Score = player.Score,
                         Mvps = player.MVPs,
+                        UtilityCount = playerStats.Utility_Count,
+                        UtilitySuccesses = playerStats.Utility_Successes,
+                        UtilityEnemies = playerStats.Utility_Enemies,
+                        FlashCount = playerStats.Flash_Count,
+                        FlashSuccesses = playerStats.Flash_Successes,
+                        HealthPointsRemovedTotal = (int)playerStats.HealthPointsRemovedTotal,
+                        HealthPointsDealtTotal = (int)playerStats.HealthPointsDealtTotal,
+                        ShotsFiredTotal = playerStats.ShotsFiredTotal,
+                        ShotsOnTargetTotal = playerStats.ShotsOnTargetTotal,
+                        V1Count = playerStats.I1v1Count,
+                        V2Count = playerStats.I1v2Count,
+                        EntryCount = playerStats.EntryCount,
+                        EntryWins = playerStats.EntryWins,
+                        EquipmentValue = playerStats.EquipmentValue,
+                        MoneySaved = playerStats.MoneySaved,
+                        KillReward = playerStats.KillReward,
+                        LiveTime = playerStats.LiveTime,
+                        CashEarned = playerStats.CashEarned,
                     };
 
                     StatsPlayer statsPlayer = new()
