@@ -42,10 +42,11 @@ Stopping GOTV and uploading the demo after a series ends can take up to ~2 minut
 
 ## Database Schema
 
-MatchZy auto-creates the 4 tables below on first connect (`CREATE TABLE IF NOT EXISTS`, both the MySQL and SQLite code paths in `DatabaseStats.cs`), so manual setup is normally unnecessary. This DDL (MySQL dialect) is provided for cases where you want to provision the schema ahead of time — e.g. pointing an external consumer (like a backend/panel) at the database before the plugin has ever connected.
+MatchZy auto-creates the 5 tables below on first connect (`CREATE TABLE IF NOT EXISTS`, both the MySQL and SQLite code paths in `DatabaseStats.cs`), so manual setup is normally unnecessary. This DDL (MySQL dialect) is provided for cases where you want to provision the schema ahead of time — e.g. pointing an external consumer (like a backend/panel) at the database before the plugin has ever connected.
 
 * `matchzy_stats_matches`, `matchzy_stats_maps`, `matchzy_stats_players` — written directly by the plugin whenever `matchzy_stats_direct_save_enabled` is `1` (the default). See [Stats Backup & Recovery](#stats-backup--recovery) above.
 * `matchzy_stats_players_rounds` — **the plugin only creates this table, it never writes rows to it.** Per-round delta stats are populated exclusively by an external consumer processing the `round_end` webhook (see [Events.md](Events.md)) — this is what lets a panel/backend reflect live match state without waiting for the map to end. `kast` here is the raw per-round `kast_this_round` boolean (0/1), **not** the cumulative percentage stored in `matchzy_stats_players.kast`.
+* `matchzy_stats_duels` — one row per individual kill ("duel"): attacker/victim/assister, weapon and engine flags (headshot, wallbang, noscope, through smoke, attacker blind), suicide/teamkill markers and the in-round time of the kill. Unlike `matchzy_stats_players_rounds`, **this table IS written by the plugin** when `matchzy_stats_direct_save_enabled` is `1` (idempotent per-round DELETE+INSERT, also replayed by `matchzy_retry_stats`); the same duels always travel in the `duels` field of the `round_end` webhook, so with direct save off an external consumer can populate it instead. Auto-increment PK because a kill has no natural key; `*_steamid64 = 0` means no real attacker (suicide/world/C4) or a bot.
 
 ```sql
 CREATE TABLE IF NOT EXISTS matchzy_stats_matches (
@@ -171,6 +172,35 @@ CREATE TABLE IF NOT EXISTS matchzy_stats_players_rounds (
     PRIMARY KEY (matchid, mapnumber, round_number, steamid64),
     INDEX round_match_map_index (matchid, mapnumber),
     CONSTRAINT fk_players_rounds_map_ref FOREIGN KEY (matchid, mapnumber)
+        REFERENCES matchzy_stats_maps (matchid, mapnumber)
+);
+
+CREATE TABLE IF NOT EXISTS matchzy_stats_duels (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    matchid INT NOT NULL,
+    mapnumber TINYINT(3) UNSIGNED NOT NULL,
+    round_number SMALLINT UNSIGNED NOT NULL,
+    round_time INT NOT NULL DEFAULT 0,
+    attacker_steamid64 BIGINT NOT NULL DEFAULT 0,
+    attacker_name VARCHAR(255) NOT NULL DEFAULT '',
+    attacker_side VARCHAR(16) NOT NULL DEFAULT '',
+    victim_steamid64 BIGINT NOT NULL DEFAULT 0,
+    victim_name VARCHAR(255) NOT NULL DEFAULT '',
+    victim_side VARCHAR(16) NOT NULL DEFAULT '',
+    assister_steamid64 BIGINT NOT NULL DEFAULT 0,
+    assister_name VARCHAR(255) NOT NULL DEFAULT '',
+    weapon VARCHAR(64) NOT NULL DEFAULT '',
+    headshot TINYINT(1) NOT NULL DEFAULT 0,
+    penetrated TINYINT(1) NOT NULL DEFAULT 0,
+    noscope TINYINT(1) NOT NULL DEFAULT 0,
+    thrusmoke TINYINT(1) NOT NULL DEFAULT 0,
+    attacker_blind TINYINT(1) NOT NULL DEFAULT 0,
+    is_suicide TINYINT(1) NOT NULL DEFAULT 0,
+    is_teamkill TINYINT(1) NOT NULL DEFAULT 0,
+    kill_timestamp VARCHAR(40) NOT NULL DEFAULT '',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX duels_match_map_round_index (matchid, mapnumber, round_number),
+    CONSTRAINT fk_duels_map_ref FOREIGN KEY (matchid, mapnumber)
         REFERENCES matchzy_stats_maps (matchid, mapnumber)
 );
 ```

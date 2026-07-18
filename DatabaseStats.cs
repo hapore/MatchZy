@@ -282,6 +282,53 @@ namespace MatchZy
             {
                 Log($"[CreateRequiredTablesSQLite - FATAL] matchzy_stats_players_rounds: {ex.Message}");
             }
+
+            // matchzy_stats_duels: un kill individual por fila. A diferencia de
+            // matchzy_stats_players_rounds, esta tabla SI la escribe el plugin
+            // (InsertDuelsAsync, solo con matchzy_stats_direct_save_enabled=1);
+            // los mismos duelos viajan ademas en el campo `duels` del webhook
+            // round_end para el consumidor externo. PK autoincrement porque no
+            // hay clave natural (dos kills identicos en la misma ronda son
+            // legitimos); steamid64 en 0 = suicidio/mundo/bot.
+            try
+            {
+                connection.Execute(@"
+                CREATE TABLE IF NOT EXISTS matchzy_stats_duels (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    matchid INTEGER NOT NULL,
+                    mapnumber INTEGER NOT NULL,
+                    round_number INTEGER NOT NULL,
+                    round_time INTEGER NOT NULL DEFAULT 0,
+                    attacker_steamid64 INTEGER NOT NULL DEFAULT 0,
+                    attacker_name TEXT NOT NULL DEFAULT '',
+                    attacker_side TEXT NOT NULL DEFAULT '',
+                    victim_steamid64 INTEGER NOT NULL DEFAULT 0,
+                    victim_name TEXT NOT NULL DEFAULT '',
+                    victim_side TEXT NOT NULL DEFAULT '',
+                    assister_steamid64 INTEGER NOT NULL DEFAULT 0,
+                    assister_name TEXT NOT NULL DEFAULT '',
+                    weapon TEXT NOT NULL DEFAULT '',
+                    headshot INTEGER NOT NULL DEFAULT 0,
+                    penetrated INTEGER NOT NULL DEFAULT 0,
+                    noscope INTEGER NOT NULL DEFAULT 0,
+                    thrusmoke INTEGER NOT NULL DEFAULT 0,
+                    attacker_blind INTEGER NOT NULL DEFAULT 0,
+                    is_suicide INTEGER NOT NULL DEFAULT 0,
+                    is_teamkill INTEGER NOT NULL DEFAULT 0,
+                    kill_timestamp TEXT NOT NULL DEFAULT '',
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (matchid) REFERENCES matchzy_stats_matches (matchid),
+                    FOREIGN KEY (matchid, mapnumber) REFERENCES matchzy_stats_maps (matchid, mapnumber)
+                )");
+                connection.Execute(@"
+                CREATE INDEX IF NOT EXISTS idx_duels_match_map_round
+                    ON matchzy_stats_duels (matchid, mapnumber, round_number)");
+                Log("[CreateRequiredTablesSQLite] matchzy_stats_duels OK");
+            }
+            catch (Exception ex)
+            {
+                Log($"[CreateRequiredTablesSQLite - FATAL] matchzy_stats_duels: {ex.Message}");
+            }
         }
 
         public void CreateRequiredTablesSQL()
@@ -454,6 +501,51 @@ namespace MatchZy
             catch (Exception ex)
             {
                 Log($"[CreateRequiredTablesSQL - FATAL] matchzy_stats_players_rounds: {ex.Message}");
+            }
+
+            // matchzy_stats_duels: un kill individual por fila. A diferencia de
+            // matchzy_stats_players_rounds, esta tabla SI la escribe el plugin
+            // (InsertDuelsAsync, solo con matchzy_stats_direct_save_enabled=1);
+            // los mismos duelos viajan ademas en el campo `duels` del webhook
+            // round_end para el consumidor externo. PK autoincrement porque no
+            // hay clave natural (dos kills identicos en la misma ronda son
+            // legitimos); steamid64 en 0 = suicidio/mundo/bot.
+            try
+            {
+                connection.Execute($@"
+                CREATE TABLE IF NOT EXISTS matchzy_stats_duels (
+                    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                    matchid INT NOT NULL,
+                    mapnumber TINYINT(3) UNSIGNED NOT NULL,
+                    round_number SMALLINT UNSIGNED NOT NULL,
+                    round_time INT NOT NULL DEFAULT 0,
+                    attacker_steamid64 BIGINT NOT NULL DEFAULT 0,
+                    attacker_name VARCHAR(255) NOT NULL DEFAULT '',
+                    attacker_side VARCHAR(16) NOT NULL DEFAULT '',
+                    victim_steamid64 BIGINT NOT NULL DEFAULT 0,
+                    victim_name VARCHAR(255) NOT NULL DEFAULT '',
+                    victim_side VARCHAR(16) NOT NULL DEFAULT '',
+                    assister_steamid64 BIGINT NOT NULL DEFAULT 0,
+                    assister_name VARCHAR(255) NOT NULL DEFAULT '',
+                    weapon VARCHAR(64) NOT NULL DEFAULT '',
+                    headshot TINYINT(1) NOT NULL DEFAULT 0,
+                    penetrated TINYINT(1) NOT NULL DEFAULT 0,
+                    noscope TINYINT(1) NOT NULL DEFAULT 0,
+                    thrusmoke TINYINT(1) NOT NULL DEFAULT 0,
+                    attacker_blind TINYINT(1) NOT NULL DEFAULT 0,
+                    is_suicide TINYINT(1) NOT NULL DEFAULT 0,
+                    is_teamkill TINYINT(1) NOT NULL DEFAULT 0,
+                    kill_timestamp VARCHAR(40) NOT NULL DEFAULT '',
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    INDEX duels_match_map_round_index (matchid, mapnumber, round_number),
+                    CONSTRAINT fk_duels_map_ref FOREIGN KEY (matchid, mapnumber)
+                        REFERENCES matchzy_stats_maps (matchid, mapnumber)
+                )");
+                Log("[CreateRequiredTablesSQL] matchzy_stats_duels OK");
+            }
+            catch (Exception ex)
+            {
+                Log($"[CreateRequiredTablesSQL - FATAL] matchzy_stats_duels: {ex.Message}");
             }
         }
 
@@ -746,6 +838,80 @@ namespace MatchZy
             catch (Exception ex)
             {
                 Log($"[UpdatePlayerStats - FATAL] Error inserting/updating data: {ex.Message}");
+            }
+            finally
+            {
+                _dbLock.Release();
+            }
+        }
+
+        public async Task InsertDuelsAsync(long matchId, int mapNumber, int roundNumber, List<MatchZyDuel> duels)
+        {
+            await _dbLock.WaitAsync();
+            try
+            {
+                EnsureConnectionOpen();
+
+                // DELETE+INSERT por ronda: no hay clave natural para un kill, asi
+                // que la idempotencia ante reintentos desde backup o doble round
+                // end se logra reinsertando la ronda completa. La transaccion
+                // evita quedar sin filas si el proceso muere entre ambos pasos.
+                using var transaction = connection.BeginTransaction();
+                await connection.ExecuteAsync(@"
+                    DELETE FROM matchzy_stats_duels
+                    WHERE matchid = @matchId AND mapnumber = @mapNumber AND round_number = @roundNumber",
+                    new { matchId, mapNumber, roundNumber }, transaction);
+
+                if (duels.Count > 0)
+                {
+                    string sqlQuery = @"
+                    INSERT INTO matchzy_stats_duels (
+                        matchid, mapnumber, round_number, round_time,
+                        attacker_steamid64, attacker_name, attacker_side,
+                        victim_steamid64, victim_name, victim_side,
+                        assister_steamid64, assister_name, weapon,
+                        headshot, penetrated, noscope, thrusmoke, attacker_blind,
+                        is_suicide, is_teamkill, kill_timestamp)
+                    VALUES (
+                        @matchId, @mapNumber, @roundNumber, @roundTime,
+                        @attackerSteamId, @attackerName, @attackerSide,
+                        @victimSteamId, @victimName, @victimSide,
+                        @assisterSteamId, @assisterName, @weapon,
+                        @headshot, @penetrated, @noscope, @thrusmoke, @attackerBlind,
+                        @isSuicide, @isTeamKill, @killTimestamp)";
+
+                    // Dapper ejecuta el INSERT una vez por cada elemento del IEnumerable
+                    await connection.ExecuteAsync(sqlQuery, duels.Select(duel => new
+                    {
+                        matchId,
+                        mapNumber,
+                        roundNumber,
+                        roundTime = duel.RoundTime,
+                        attackerSteamId = long.TryParse(duel.AttackerSteamId, out long attackerId) ? attackerId : 0L,
+                        attackerName = duel.AttackerName,
+                        attackerSide = duel.AttackerSide,
+                        victimSteamId = long.TryParse(duel.VictimSteamId, out long victimId) ? victimId : 0L,
+                        victimName = duel.VictimName,
+                        victimSide = duel.VictimSide,
+                        assisterSteamId = long.TryParse(duel.AssisterSteamId, out long assisterId) ? assisterId : 0L,
+                        assisterName = duel.AssisterName,
+                        weapon = duel.Weapon,
+                        headshot = duel.Headshot ? 1 : 0,
+                        penetrated = duel.Penetrated ? 1 : 0,
+                        noscope = duel.Noscope ? 1 : 0,
+                        thrusmoke = duel.Thrusmoke ? 1 : 0,
+                        attackerBlind = duel.AttackerBlind ? 1 : 0,
+                        isSuicide = duel.IsSuicide ? 1 : 0,
+                        isTeamKill = duel.IsTeamKill ? 1 : 0,
+                        killTimestamp = duel.TimestampUtc,
+                    }), transaction);
+                }
+                transaction.Commit();
+                Log($"[InsertDuelsAsync] {duels.Count} duelos guardados para match {matchId} map {mapNumber} round {roundNumber}");
+            }
+            catch (Exception ex)
+            {
+                Log($"[InsertDuelsAsync - FATAL] Error insertando duelos de matchId: {matchId} round: {roundNumber} [ERROR]: {ex.Message}");
             }
             finally
             {

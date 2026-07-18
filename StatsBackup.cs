@@ -291,6 +291,19 @@ namespace MatchZy
             return bestPath;
         }
 
+        private RoundStatsBackupFile? TryDeserializeBackup(string path)
+        {
+            try
+            {
+                return JsonSerializer.Deserialize<RoundStatsBackupFile>(File.ReadAllText(path));
+            }
+            catch (Exception e)
+            {
+                Log($"[TryDeserializeBackup FATAL] Error leyendo/parseando {path}: {e.Message}");
+                return null;
+            }
+        }
+
         private static List<int> DiscoverMapNumbersForMatch(string statsBackupRoot, long matchId)
         {
             string dir = Path.Combine(statsBackupRoot, matchId.ToString());
@@ -324,18 +337,10 @@ namespace MatchZy
             string? backupFile = FindLatestRoundBackupFile(statsBackupRoot, matchId, mapNumber);
             if (backupFile == null) return (false, 0, "no se encontro ningun backup de stats");
 
-            RoundStatsBackupFile? backup;
-            try
-            {
-                backup = JsonSerializer.Deserialize<RoundStatsBackupFile>(File.ReadAllText(backupFile));
-            }
-            catch (Exception e)
-            {
-                Log($"[RetryStatsFromBackup FATAL] Error leyendo/parseando {backupFile}: {e.Message}");
-                return (false, 0, "backup corrupto");
-            }
+            RoundStatsBackupFile? backup = TryDeserializeBackup(backupFile);
+            if (backup == null) return (false, 0, "backup corrupto");
 
-            if (backup == null || backup.Players.Count == 0)
+            if (backup.Players.Count == 0)
             {
                 return (false, 0, "backup vacio");
             }
@@ -352,6 +357,19 @@ namespace MatchZy
             }
 
             await database.UpdatePlayerStatsAsync(matchId, mapNumber, rawDict);
+
+            // Los duelos son per-round (no acumulativos como las stats de arriba):
+            // hay que reinsertar los de TODOS los backups de ronda del mapa, no
+            // solo el ultimo. Idempotente via DELETE+INSERT por ronda. Backups
+            // viejos sin `duels` deserializan a lista vacia y se saltan.
+            foreach (string roundFile in Directory.GetFiles(
+                Path.Combine(statsBackupRoot, matchId.ToString()),
+                $"matchzy_stats_{matchId}_{mapNumber}_round*.json"))
+            {
+                MatchZyRoundEndedEvent? payload = TryDeserializeBackup(roundFile)?.WebhookPayload;
+                if (payload == null || payload.Duels.Count == 0) continue;
+                await database.InsertDuelsAsync(matchId, mapNumber, payload.RoundNumber, payload.Duels);
+            }
 
             bool draw = h.Team1Score == h.Team2Score;
             bool team1Won = h.Team1Score > h.Team2Score;

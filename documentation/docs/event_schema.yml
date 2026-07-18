@@ -257,6 +257,13 @@ webhooks:
                       description: The stats for team 2.
                       allOf:
                         - $ref: "#/components/schemas/MatchZyStatsTeam"
+                    duels:
+                      type: array
+                      description: |
+                        The individual kills ("duels") of the round that just ended, in chronological order.
+                        Unlike the per-player stats (cumulative per map), each duel is a point-in-time event.
+                      items:
+                        $ref: "#/components/schemas/MatchZyDuel"
   "MatchZyOnDemoUploadEnded":
     post:
       requestBody:
@@ -689,6 +696,77 @@ components:
           type: integer
           minimum: 0
           description: "The total cash the player earned over the match."
+    MatchZyDuel:
+      type: object
+      properties:
+        round_number:
+          type: integer
+          minimum: 0
+          description: "The round in which the kill occurred."
+          example: 5
+        round_time:
+          type: integer
+          minimum: 0
+          description: "Seconds elapsed since the round's freeze end when the kill occurred (0 if it happened during freezetime)."
+          example: 23
+        attacker_steamid:
+          type: string
+          description: 'The SteamID64 of the attacker as a string. "0" when there is no real attacker (suicide, fall, world, C4) or the attacker is a bot.'
+          example: "76561198154367261"
+        attacker_name:
+          type: string
+          description: "The in-game name of the attacker. Empty when there is no attacker."
+        attacker_side:
+          type: string
+          enum: ["CT", "TERRORIST", ""]
+          description: "The side the attacker was playing when the kill occurred."
+        victim_steamid:
+          type: string
+          description: 'The SteamID64 of the victim as a string. "0" for bots.'
+          example: "76561198267412921"
+        victim_name:
+          type: string
+          description: "The in-game name of the victim."
+        victim_side:
+          type: string
+          enum: ["CT", "TERRORIST", ""]
+          description: "The side the victim was playing when they died."
+        assister_steamid:
+          type: string
+          description: 'The SteamID64 of the assister as a string. "0" when there was no assist.'
+        assister_name:
+          type: string
+          description: "The in-game name of the assister. Empty when there was no assist."
+        weapon:
+          type: string
+          description: 'The raw engine weapon name used for the kill ("ak47", "knife_butterfly", "planted_c4", "world"...).'
+          example: "ak47"
+        headshot:
+          type: boolean
+          description: "Whether the kill was a headshot."
+        penetrated:
+          type: boolean
+          description: "Whether the killing bullet penetrated a surface (wallbang)."
+        noscope:
+          type: boolean
+          description: "Whether the kill was a noscope (sniper rifle without scoping)."
+        thrusmoke:
+          type: boolean
+          description: "Whether the kill was through smoke."
+        attacker_blind:
+          type: boolean
+          description: "Whether the attacker was flashed when making the kill."
+        is_suicide:
+          type: boolean
+          description: "Whether the death had no real attacker (fall damage, world, C4, console kill)."
+        is_teamkill:
+          type: boolean
+          description: "Whether the attacker and the victim were on the same team."
+        timestamp_utc:
+          type: string
+          format: date-time
+          description: "The ISO 8601 UTC timestamp of the kill."
+          example: "2026-07-18T21:14:03.1234567Z"
     MatchZyDemoFileEvent:
       allOf:
         - "$ref": "#/components/schemas/MatchZyMapEvent"

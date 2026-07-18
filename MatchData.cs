@@ -236,3 +236,75 @@ public class MatchZyStatsTeam : MatchZyTeamWrapper
         Players = players;
     }
 }
+
+// Un "duelo" = un kill individual capturado en EventPlayerDeath. Viaja en la
+// lista `duels` del evento round_end y se persiste en matchzy_stats_duels.
+// Props mutables con defaults (sin `required`): los backups de ronda viejos
+// (RoundStatsBackupFile.WebhookPayload) no traen este campo y deben seguir
+// deserializando; RoundNumber ademas se asigna recien en el flush de round end.
+public class MatchZyDuel
+{
+    [JsonPropertyName("round_number")]
+    public int RoundNumber { get; set; }
+
+    // Segundos desde el freeze end de la ronda (0 si la kill ocurre en freezetime).
+    [JsonPropertyName("round_time")]
+    public int RoundTime { get; set; }
+
+    // SteamIDs como string (igual que StatsPlayer.SteamId) para no perder
+    // precision en consumidores JS. "0" = suicidio/mundo/bot.
+    [JsonPropertyName("attacker_steamid")]
+    public string AttackerSteamId { get; set; } = "0";
+
+    [JsonPropertyName("attacker_name")]
+    public string AttackerName { get; set; } = "";
+
+    // "CT" | "TERRORIST" | ""
+    [JsonPropertyName("attacker_side")]
+    public string AttackerSide { get; set; } = "";
+
+    [JsonPropertyName("victim_steamid")]
+    public string VictimSteamId { get; set; } = "0";
+
+    [JsonPropertyName("victim_name")]
+    public string VictimName { get; set; } = "";
+
+    [JsonPropertyName("victim_side")]
+    public string VictimSide { get; set; } = "";
+
+    [JsonPropertyName("assister_steamid")]
+    public string AssisterSteamId { get; set; } = "0";
+
+    [JsonPropertyName("assister_name")]
+    public string AssisterName { get; set; } = "";
+
+    // Nombre crudo del arma del evento: "ak47", "knife_butterfly", "planted_c4", "world"...
+    [JsonPropertyName("weapon")]
+    public string Weapon { get; set; } = "";
+
+    [JsonPropertyName("headshot")]
+    public bool Headshot { get; set; }
+
+    [JsonPropertyName("penetrated")]
+    public bool Penetrated { get; set; }
+
+    [JsonPropertyName("noscope")]
+    public bool Noscope { get; set; }
+
+    [JsonPropertyName("thrusmoke")]
+    public bool Thrusmoke { get; set; }
+
+    [JsonPropertyName("attacker_blind")]
+    public bool AttackerBlind { get; set; }
+
+    // Attacker null o == victim: caidas, mundo, `kill` en consola, C4.
+    [JsonPropertyName("is_suicide")]
+    public bool IsSuicide { get; set; }
+
+    [JsonPropertyName("is_teamkill")]
+    public bool IsTeamKill { get; set; }
+
+    // ISO 8601 UTC del momento de la kill.
+    [JsonPropertyName("timestamp_utc")]
+    public string TimestampUtc { get; set; } = "";
+}

@@ -154,9 +154,54 @@ Fin de ronda con stats agregados de cada equipo.
   "reason": 9,
   "winner": { "team": "team1", "side": "ct" },
   "team1": { "name": "TeamA", "score": 3, "players": [/* ... */] },
-  "team2": { "name": "TeamB", "score": 2, "players": [/* ... */] }
+  "team2": { "name": "TeamB", "score": 2, "players": [/* ... */] },
+  "duels": [
+    {
+      "round_number": 5,
+      "round_time": 23,
+      "attacker_steamid": "76561198154367261",
+      "attacker_name": "player1",
+      "attacker_side": "CT",
+      "victim_steamid": "76561198267412921",
+      "victim_name": "player2",
+      "victim_side": "TERRORIST",
+      "assister_steamid": "76561198083439121",
+      "assister_name": "player3",
+      "weapon": "ak47",
+      "headshot": true,
+      "penetrated": false,
+      "noscope": false,
+      "thrusmoke": false,
+      "attacker_blind": false,
+      "is_suicide": false,
+      "is_teamkill": false,
+      "timestamp_utc": "2026-07-18T21:14:03.1234567Z"
+    }
+  ]
 }
 ```
+
+`duels` *(custom — Hapore)*: lista de **kills individuales** de la ronda que
+termina, en orden cronológico. A diferencia de `players[].stats` (acumulado por
+mapa), cada duelo es un evento puntual:
+
+- `round_time`: segundos desde el freeze end de la ronda (0 si la kill ocurre
+  en freezetime).
+- `attacker_steamid` / `victim_steamid` / `assister_steamid`: SteamID64 como
+  string. `"0"` = sin atacante real (suicidio, caída, mundo, C4) o bot. Si no
+  hubo asister, `assister_steamid` es `"0"`.
+- `attacker_side` / `victim_side`: `"CT"`, `"TERRORIST"` o `""`.
+- `weapon`: nombre crudo del arma del motor (`"ak47"`, `"knife_butterfly"`,
+  `"planted_c4"`, `"world"`...).
+- `penetrated`: la bala atravesó una superficie (wallbang); `noscope`,
+  `thrusmoke`, `attacker_blind`: flags del motor; `is_suicide`: attacker nulo o
+  igual a la víctima; `is_teamkill`: attacker y víctima del mismo equipo.
+- `timestamp_utc`: instante ISO 8601 UTC de la kill.
+
+El plugin también persiste estos duelos en la tabla `matchzy_stats_duels`
+cuando `matchzy_stats_direct_save_enabled` está activo; con el guardado directo
+apagado, este campo del webhook es la única fuente para poblarla desde el
+backend.
 
 Cada jugador en `players[].stats` es **acumulado por mapa** (no un delta de la
 ronda), con dos excepciones/agregados a tener en cuenta:

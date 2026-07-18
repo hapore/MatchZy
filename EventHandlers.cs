@@ -209,6 +209,8 @@ public partial class MatchZy
         try
         {
             if (!matchStarted) return HookResult.Continue;
+            // Base del round_time de los duelos: la ronda pasa a live aqui.
+            currentRoundLiveStartUtc = DateTime.UtcNow;
             HashSet<CCSPlayerController> coaches = GetAllCoaches();
 
             foreach (var coach in coaches)
@@ -356,6 +358,14 @@ public partial class MatchZy
                 if (IsPlayerValid(victim))
                 {
                     ulong victimSteamId = victim!.SteamID;
+
+                    // Duelo (kill individual). Se excluye el suicidio artificial
+                    // del coach (el respawn-kill silenciado arriba): no es una
+                    // muerte real de la ronda.
+                    bool isCoachSuicide = isSuicide &&
+                        (matchzyTeam1.coach.Contains(victim) || matchzyTeam2.coach.Contains(victim));
+                    if (!isCoachSuicide)
+                        RecordDuel(@event, victim, attacker, assister, isSuicide);
 
                     // Knife kill
                     if (!isSuicide && IsPlayerValid(attacker))

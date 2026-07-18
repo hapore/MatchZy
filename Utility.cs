@@ -1569,7 +1569,13 @@ namespace MatchZy
             CreateMatchZyRoundDataBackup();
             InitPlayerDamageInfo();
             UpdateHostname();
-            if (isMatchLive) ResetPerRoundKastState();
+            if (isMatchLive)
+            {
+                ResetPerRoundKastState();
+                // Fallback para el round_time de los duelos; EventRoundFreezeEnd
+                // lo sobreescribe con el instante real en que la ronda pasa a live.
+                currentRoundLiveStartUtc = DateTime.UtcNow;
+            }
         }
 
         private void HandlePostRoundEndEvent(EventRoundEnd @event)
@@ -1590,6 +1596,8 @@ namespace MatchZy
 
                     int currentMapNumber = matchConfig.CurrentMapNumber;
                     long matchId = liveMatchId;
+                    int roundNumber = GetRoundNumer();
+                    List<MatchZyDuel> roundDuels = FlushCurrentRoundDuels(roundNumber);
                     int ctTeamNum = reverseTeamSides["CT"] == matchzyTeam1 ? 1 : 2;
                     int tTeamNum = reverseTeamSides["TERRORIST"] == matchzyTeam1 ? 1 : 2;
                     Winner winner = new(@event.Winner.ToString(), t1score > t2score ? "team1" : "team2");
@@ -1598,12 +1606,13 @@ namespace MatchZy
                     {
                         MatchId = liveMatchId,
                         MapNumber = matchConfig.CurrentMapNumber,
-                        RoundNumber = GetRoundNumer(),
+                        RoundNumber = roundNumber,
                         Reason = @event.Reason,
                         RoundTime = 0,
                         Winner = winner,
                         StatsTeam1 = new MatchZyStatsTeam(matchzyTeam1.id, matchzyTeam1.teamName, 0, t1score, 0, 0, playerStatsListTeam1),
                         StatsTeam2 = new MatchZyStatsTeam(matchzyTeam2.id, matchzyTeam2.teamName, 0, t2score, 0, 0, playerStatsListTeam2),
+                        Duels = roundDuels,
                     };
 
                     // Sincrono y antes del Task.Run de abajo: debe sobrevivir aunque el
@@ -1626,6 +1635,7 @@ namespace MatchZy
                             EnsureDatabaseInitialized();
                             await database.UpdatePlayerStatsAsync(matchId, currentMapNumber, playerStatsDictionary);
                             await database.UpdateMapStatsAsync(matchId, currentMapNumber, t1score, t2score);
+                            await database.InsertDuelsAsync(matchId, currentMapNumber, roundNumber, roundDuels);
                         }
                     });
 

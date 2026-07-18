@@ -212,6 +212,14 @@ public class MatchZyRoundEndedEvent : MatchZyTimedRoundEvent
     [JsonPropertyName("team2")]
     public required MatchZyStatsTeam StatsTeam2 { get; init; }
 
+    /// <summary>
+    /// Duelos (kills individuales) de la ronda que termina. No es `required`
+    /// y tiene default: los backups de ronda viejos (RoundStatsBackupFile)
+    /// no traen este campo y deben seguir deserializando.
+    /// </summary>
+    [JsonPropertyName("duels")]
+    public List<MatchZyDuel> Duels { get; init; } = new();
+
     public MatchZyRoundEndedEvent() : base("round_end")
     {
     }
