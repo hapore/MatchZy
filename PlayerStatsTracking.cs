@@ -1,5 +1,6 @@
 using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
+using CounterStrikeSharp.API.Modules.Entities.Constants;
 using CounterStrikeSharp.API.Modules.Utils;
 
 namespace MatchZy
@@ -30,9 +31,16 @@ namespace MatchZy
         private List<MatchZyDuel> currentRoundDuels = new();
 
         // Momento en que la ronda paso a live (freeze end). Base para el
-        // round_time de cada duelo. Fallback en round start por si freeze end
-        // no dispara; freeze end lo sobreescribe con el valor correcto.
+        // round_time de cada duelo y para la duracion de la ronda en la
+        // cabecera (matchzy_stats_rounds). Fallback en round start por si
+        // freeze end no dispara; freeze end lo sobreescribe con el valor correcto.
         public DateTime currentRoundLiveStartUtc = DateTime.UtcNow;
+
+        // Estado de la bomba en la ronda en curso, para la cabecera de ronda.
+        // No se deduce del reason de round end (los CT pueden ganar por
+        // eliminacion con la bomba plantada). Reset en round start.
+        public bool currentRoundBombPlanted = false;
+        public string currentRoundBombSite = "";
 
         // ─── Helpers ──────────────────────────────────────────────────────────────
 
@@ -59,18 +67,55 @@ namespace MatchZy
             };
         }
 
+        // Posicion (plano horizontal X/Y; en Source 2 la vertical es Z y no se
+        // captura) y nombre del area del mapa (m_szLastPlaceName) del pawn.
+        private static (float x, float y, string place) GetPawnLocation(CCSPlayerController player)
+        {
+            var pawn = player.PlayerPawn?.Value;
+            var origin = pawn?.AbsOrigin;
+            return (origin?.X ?? 0f, origin?.Y ?? 0f, pawn?.LastPlaceName ?? "");
+        }
+
+        // Nombre estable del codigo reason de EventRoundEnd via el enum
+        // RoundEndReason de CS2 ("TargetBombed", "BombDefused", "CTsWin"...).
+        // Un valor fuera del enum devuelve el numero como string.
+        public static string GetRoundEndReasonName(int reason)
+        {
+            return ((RoundEndReason)reason).ToString();
+        }
+
+        // Llamado desde EventBombPlanted. El site se deriva del area del
+        // planter ("BombsiteA"/"BombsiteB" -> "A"/"B"); si el nombre del area
+        // no matchea la convencion, se guarda crudo antes que perderlo.
+        public void RecordBombPlant(CCSPlayerController planter)
+        {
+            currentRoundBombPlanted = true;
+            (_, _, string place) = GetPawnLocation(planter);
+            currentRoundBombSite = place switch
+            {
+                "BombsiteA" => "A",
+                "BombsiteB" => "B",
+                _ => place,
+            };
+        }
+
         // Registra un duelo (kill individual) de la ronda en curso. Los bots se
-        // capturan con steamid "0"; RoundNumber se asigna recien en el flush
-        // porque GetRoundNumer (suma de scores) solo es correcto en round end.
+        // capturan con steamid "0". La ronda a la que pertenece la define el
+        // round_end que hace el flush (GetRoundNumer, suma de scores, solo es
+        // correcto en round end), por eso el duelo no lleva numero de ronda.
         public void RecordDuel(EventPlayerDeath @event, CCSPlayerController victim, CCSPlayerController? attacker, CCSPlayerController? assister, bool isSuicide)
         {
             bool hasAttacker = !isSuicide && IsPlayerValid(attacker);
+            (float victimX, float victimY, string victimPlace) = GetPawnLocation(victim);
             var duel = new MatchZyDuel
             {
                 RoundTime = Math.Max(0, (int)(DateTime.UtcNow - currentRoundLiveStartUtc).TotalSeconds),
                 VictimSteamId = victim.SteamID.ToString(),
                 VictimName = victim.PlayerName,
                 VictimSide = GetPlayerSide(victim),
+                VictimX = victimX,
+                VictimY = victimY,
+                VictimPlace = victimPlace,
                 Weapon = @event.Weapon ?? "",
                 Headshot = @event.Headshot,
                 Penetrated = @event.Penetrated > 0,
@@ -82,9 +127,13 @@ namespace MatchZy
             };
             if (hasAttacker)
             {
+                (float attackerX, float attackerY, string attackerPlace) = GetPawnLocation(attacker!);
                 duel.AttackerSteamId = attacker!.SteamID.ToString();
                 duel.AttackerName = attacker.PlayerName;
                 duel.AttackerSide = GetPlayerSide(attacker);
+                duel.AttackerX = attackerX;
+                duel.AttackerY = attackerY;
+                duel.AttackerPlace = attackerPlace;
                 duel.IsTeamKill = attacker.TeamNum == victim.TeamNum;
             }
             if (IsPlayerValid(assister))
@@ -95,14 +144,13 @@ namespace MatchZy
             currentRoundDuels.Add(duel);
         }
 
-        // Snapshot-and-swap: devuelve los duelos de la ronda que termina (con su
-        // round_number ya asignado) y deja una lista nueva, para que el Task.Run
-        // de round end no comparta la lista viva con el handler de kills.
-        public List<MatchZyDuel> FlushCurrentRoundDuels(int roundNumber)
+        // Snapshot-and-swap: devuelve los duelos de la ronda que termina y deja
+        // una lista nueva, para que el Task.Run de round end no comparta la
+        // lista viva con el handler de kills.
+        public List<MatchZyDuel> FlushCurrentRoundDuels()
         {
             List<MatchZyDuel> duels = currentRoundDuels;
             currentRoundDuels = new List<MatchZyDuel>();
-            foreach (MatchZyDuel duel in duels) duel.RoundNumber = roundNumber;
             return duels;
         }
 
@@ -112,6 +160,8 @@ namespace MatchZy
             kastFlags.Clear();
             recentDeaths.Clear();
             currentRoundDuels.Clear();
+            currentRoundBombPlanted = false;
+            currentRoundBombSite = "";
         }
 
         // ─── Called at round end (before GetPlayerStatsDict) ─────────────────────
@@ -157,6 +207,8 @@ namespace MatchZy
             kastFlags.Clear();
             recentDeaths.Clear();
             currentRoundDuels.Clear();
+            currentRoundBombPlanted = false;
+            currentRoundBombSite = "";
         }
 
         // ─── Called on match reset ────────────────────────────────────────────────

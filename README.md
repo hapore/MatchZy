@@ -42,11 +42,14 @@ Stopping GOTV and uploading the demo after a series ends can take up to ~2 minut
 
 ## Database Schema
 
-MatchZy auto-creates the 5 tables below on first connect (`CREATE TABLE IF NOT EXISTS`, both the MySQL and SQLite code paths in `DatabaseStats.cs`), so manual setup is normally unnecessary. This DDL (MySQL dialect) is provided for cases where you want to provision the schema ahead of time — e.g. pointing an external consumer (like a backend/panel) at the database before the plugin has ever connected.
+MatchZy auto-creates the 6 tables below on first connect (`CREATE TABLE IF NOT EXISTS`, both the MySQL and SQLite code paths in `DatabaseStats.cs`), so manual setup is normally unnecessary. This DDL (MySQL dialect) is provided for cases where you want to provision the schema ahead of time — e.g. pointing an external consumer (like a backend/panel) at the database before the plugin has ever connected.
 
 * `matchzy_stats_matches`, `matchzy_stats_maps`, `matchzy_stats_players` — written directly by the plugin whenever `matchzy_stats_direct_save_enabled` is `1` (the default). See [Stats Backup & Recovery](#stats-backup--recovery) above.
-* `matchzy_stats_players_rounds` — **the plugin only creates this table, it never writes rows to it.** Per-round delta stats are populated exclusively by an external consumer processing the `round_end` webhook (see [Events.md](Events.md)) — this is what lets a panel/backend reflect live match state without waiting for the map to end. `kast` here is the raw per-round `kast_this_round` boolean (0/1), **not** the cumulative percentage stored in `matchzy_stats_players.kast`.
-* `matchzy_stats_duels` — one row per individual kill ("duel"): attacker/victim/assister, weapon and engine flags (headshot, wallbang, noscope, through smoke, attacker blind), suicide/teamkill markers and the in-round time of the kill. Unlike `matchzy_stats_players_rounds`, **this table IS written by the plugin** when `matchzy_stats_direct_save_enabled` is `1` (idempotent per-round DELETE+INSERT, also replayed by `matchzy_retry_stats`); the same duels always travel in the `duels` field of the `round_end` webhook, so with direct save off an external consumer can populate it instead. Auto-increment PK because a kill has no natural key; `*_steamid64 = 0` means no real attacker (suicide/world/C4) or a bot.
+* `matchzy_stats_players_rounds` — **the plugin only creates this table, it never writes rows to it.** Per-round delta stats are populated exclusively by an external consumer processing the `round_end` webhook (see [Events.md](Events.md)) — this is what lets a panel/backend reflect live match state without waiting for the map to end. `kast` here is the raw per-round `kast_this_round` boolean (0/1), **not** the cumulative percentage stored in `matchzy_stats_players.kast`. Each row also references its round header via the composite FK `(matchid, mapnumber, round_number)` → `matchzy_stats_rounds` (the columns are already a prefix of the PK, so no extra column/index is needed) — meaning the consumer must upsert the round header **before** the per-player deltas.
+* `matchzy_stats_rounds` — one header row per round: end-of-round reason (raw code + stable `reason_name` from the CS2 `RoundEndReason` enum), winning side/team, round duration (freeze end → round end), map score after the round, and whether/where the bomb was planted. Upserted on the natural `UNIQUE (matchid, mapnumber, round_number)` so retries and round restores overwrite the same row — that natural key is what the composite FKs of `matchzy_stats_players_rounds` and `matchzy_stats_duels` reference. Written by the plugin with direct save on; the same fields travel at the top level of the `round_end` webhook for an external consumer.
+* `matchzy_stats_duels` — one row per individual kill ("duel"): attacker/victim/assister, weapon and engine flags (headshot, wallbang, noscope, through smoke, attacker blind), suicide/teamkill markers, the in-round time of the kill, and each player's horizontal world position (`*_x`/`*_y` — in Source 2 the vertical axis is Z, which is not captured) plus map area name (`*_place`, from `m_szLastPlaceName`). The round it belongs to is referenced by the natural composite FK `(matchid, mapnumber, round_number)` → `matchzy_stats_rounds`, same convention as `matchzy_stats_players_rounds` (the round header must be upserted first). Unlike `matchzy_stats_players_rounds`, **this table IS written by the plugin** when `matchzy_stats_direct_save_enabled` is `1` (idempotent per-round DELETE+INSERT, also replayed by `matchzy_retry_stats`); the same duels always travel in the `duels` field of the `round_end` webhook, so with direct save off an external consumer can populate it instead. Auto-increment PK because a kill has no natural key; `*_steamid64 = 0` means no real attacker (suicide/world/C4) or a bot. In the webhook JSON each duel does NOT carry a round number — the enclosing event's `round_number` defines it; the column is added by whichever writer persists the row.
+
+> **Schema migration note:** if a database has a previous `matchzy_stats_duels` layout (the interim one with a `round_id` column, or the original one without the FK to the round header), the plugin detects it on connect and drops/recreates the table with the current schema (old duel rows are discarded; they can be replayed from round backups via `matchzy_retry_stats`). For `matchzy_stats_players_rounds` the plugin tries to `ALTER TABLE ... ADD CONSTRAINT fk_players_rounds_round_ref` on existing MySQL tables; this fails (and is only logged as a warning) if historical rows exist without a matching round header — populate `matchzy_stats_rounds` first or clean the old rows to get the FK. On SQLite (where FKs can't be added via ALTER) the table is dropped/recreated, which is safe because the plugin-side SQLite copy never receives rows.
 
 ```sql
 CREATE TABLE IF NOT EXISTS matchzy_stats_matches (
@@ -124,6 +127,27 @@ CREATE TABLE IF NOT EXISTS matchzy_stats_players (
         REFERENCES matchzy_stats_maps (matchid, mapnumber)
 );
 
+CREATE TABLE IF NOT EXISTS matchzy_stats_rounds (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    matchid INT NOT NULL,
+    mapnumber TINYINT(3) UNSIGNED NOT NULL,
+    round_number SMALLINT UNSIGNED NOT NULL,
+    reason SMALLINT NOT NULL DEFAULT 0,
+    reason_name VARCHAR(64) NOT NULL DEFAULT '',
+    winner_side VARCHAR(16) NOT NULL DEFAULT '',
+    winner_team VARCHAR(8) NOT NULL DEFAULT '',
+    winner_team_name VARCHAR(255) NOT NULL DEFAULT '',
+    round_duration INT NOT NULL DEFAULT 0,
+    team1_score SMALLINT NOT NULL DEFAULT 0,
+    team2_score SMALLINT NOT NULL DEFAULT 0,
+    bomb_planted TINYINT(1) NOT NULL DEFAULT 0,
+    bomb_site VARCHAR(32) NOT NULL DEFAULT '',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_rounds_match_map_round (matchid, mapnumber, round_number),
+    CONSTRAINT fk_rounds_map_ref FOREIGN KEY (matchid, mapnumber)
+        REFERENCES matchzy_stats_maps (matchid, mapnumber)
+);
+
 CREATE TABLE IF NOT EXISTS matchzy_stats_players_rounds (
     matchid INT NOT NULL,
     mapnumber TINYINT(3) UNSIGNED NOT NULL,
@@ -172,7 +196,9 @@ CREATE TABLE IF NOT EXISTS matchzy_stats_players_rounds (
     PRIMARY KEY (matchid, mapnumber, round_number, steamid64),
     INDEX round_match_map_index (matchid, mapnumber),
     CONSTRAINT fk_players_rounds_map_ref FOREIGN KEY (matchid, mapnumber)
-        REFERENCES matchzy_stats_maps (matchid, mapnumber)
+        REFERENCES matchzy_stats_maps (matchid, mapnumber),
+    CONSTRAINT fk_players_rounds_round_ref FOREIGN KEY (matchid, mapnumber, round_number)
+        REFERENCES matchzy_stats_rounds (matchid, mapnumber, round_number)
 );
 
 CREATE TABLE IF NOT EXISTS matchzy_stats_duels (
@@ -184,9 +210,15 @@ CREATE TABLE IF NOT EXISTS matchzy_stats_duels (
     attacker_steamid64 BIGINT NOT NULL DEFAULT 0,
     attacker_name VARCHAR(255) NOT NULL DEFAULT '',
     attacker_side VARCHAR(16) NOT NULL DEFAULT '',
+    attacker_x FLOAT NOT NULL DEFAULT 0,
+    attacker_y FLOAT NOT NULL DEFAULT 0,
+    attacker_place VARCHAR(64) NOT NULL DEFAULT '',
     victim_steamid64 BIGINT NOT NULL DEFAULT 0,
     victim_name VARCHAR(255) NOT NULL DEFAULT '',
     victim_side VARCHAR(16) NOT NULL DEFAULT '',
+    victim_x FLOAT NOT NULL DEFAULT 0,
+    victim_y FLOAT NOT NULL DEFAULT 0,
+    victim_place VARCHAR(64) NOT NULL DEFAULT '',
     assister_steamid64 BIGINT NOT NULL DEFAULT 0,
     assister_name VARCHAR(255) NOT NULL DEFAULT '',
     weapon VARCHAR(64) NOT NULL DEFAULT '',
@@ -201,7 +233,9 @@ CREATE TABLE IF NOT EXISTS matchzy_stats_duels (
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     INDEX duels_match_map_round_index (matchid, mapnumber, round_number),
     CONSTRAINT fk_duels_map_ref FOREIGN KEY (matchid, mapnumber)
-        REFERENCES matchzy_stats_maps (matchid, mapnumber)
+        REFERENCES matchzy_stats_maps (matchid, mapnumber),
+    CONSTRAINT fk_duels_round_ref FOREIGN KEY (matchid, mapnumber, round_number)
+        REFERENCES matchzy_stats_rounds (matchid, mapnumber, round_number)
 );
 ```
 

@@ -203,8 +203,40 @@ public class MatchZyRoundEndedEvent : MatchZyTimedRoundEvent
     [JsonPropertyName("reason")]
     public required int Reason { get; init; }
 
+    /// <summary>
+    /// Nombre estable del codigo `reason` (enum RoundEndReason de CS2:
+    /// "TargetBombed", "BombDefused", "CTsWin", "TerroristsWin",
+    /// "TargetSaved"...). No es `required`: los backups de ronda viejos no lo
+    /// traen; el consumidor puede recalcularlo desde `reason`.
+    /// </summary>
+    [JsonPropertyName("reason_name")]
+    public string ReasonName { get; init; } = "";
+
     [JsonPropertyName("winner")]
     public required Winner Winner { get; init; }
+
+    /// <summary>
+    /// Lado que gano la ronda ya normalizado: "CT" | "TERRORIST" | "".
+    /// `winner.side` viaja como el team num crudo del motor; este campo evita
+    /// que cada consumidor repita esa traduccion.
+    /// </summary>
+    [JsonPropertyName("winner_side")]
+    public string WinnerSide { get; init; } = "";
+
+    /// <summary>Nombre visible del equipo ganador (matchzyTeam1/2.teamName).</summary>
+    [JsonPropertyName("winner_team_name")]
+    public string WinnerTeamName { get; init; } = "";
+
+    /// <summary>
+    /// La bomba fue plantada en esta ronda. No se deduce de `reason`: los CT
+    /// pueden ganar por eliminacion con la bomba ya plantada.
+    /// </summary>
+    [JsonPropertyName("bomb_planted")]
+    public bool BombPlanted { get; init; }
+
+    /// <summary>"A" | "B" | "" (derivado del area del planter; "" si no se planto).</summary>
+    [JsonPropertyName("bomb_site")]
+    public string BombSite { get; init; } = "";
 
     [JsonPropertyName("team1")]
     public required MatchZyStatsTeam StatsTeam1 { get; init; }

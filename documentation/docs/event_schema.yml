@@ -245,8 +245,25 @@ webhooks:
                       type: integer
                       minimum: 0
                       description: The reason for the round ending. See https://github.com/roflmuffin/CounterStrikeSharp/blob/main/managed/CounterStrikeSharp.API/Modules/Entities/Constants/RoundEndReason.cs#L19.
+                    reason_name:
+                      type: string
+                      description: 'Stable name of the `reason` code, from the CS2 RoundEndReason enum ("TargetBombed", "BombDefused", "CTsWin", "TerroristsWin", "TargetSaved"...).'
+                      example: "TerroristsWin"
                     winner:
                       $ref: "#/components/schemas/Winner"
+                    winner_side:
+                      type: string
+                      enum: ["CT", "TERRORIST", ""]
+                      description: "The side that won the round, already normalized (`winner.side` carries the raw engine team number)."
+                    winner_team_name:
+                      type: string
+                      description: "The display name of the winning team (`winner.team` remains team1/team2)."
+                    bomb_planted:
+                      type: boolean
+                      description: "Whether the bomb was planted during the round. Not derivable from `reason`: CTs can win by elimination with the bomb already planted."
+                    bomb_site:
+                      type: string
+                      description: 'The site where the bomb was planted ("A", "B", or "" if it was not planted).'
                     team1:
                       title: MatchZyStatsTeam
                       description: The stats for team 1.
@@ -698,12 +715,10 @@ components:
           description: "The total cash the player earned over the match."
     MatchZyDuel:
       type: object
+      description: |
+        An individual kill of a round. The round it belongs to is given by the `round_number`
+        of the enclosing round_end event (duels no longer carry their own round number).
       properties:
-        round_number:
-          type: integer
-          minimum: 0
-          description: "The round in which the kill occurred."
-          example: 5
         round_time:
           type: integer
           minimum: 0
@@ -720,6 +735,18 @@ components:
           type: string
           enum: ["CT", "TERRORIST", ""]
           description: "The side the attacker was playing when the kill occurred."
+        attacker_x:
+          type: number
+          description: "World X coordinate of the attacker at the moment of the kill. Horizontal plane only (in Source 2 the vertical axis is Z, which is not captured). 0 when there is no attacker or the pawn could not be read."
+          example: -512.3
+        attacker_y:
+          type: number
+          description: "World Y coordinate of the attacker at the moment of the kill."
+          example: 1044.7
+        attacker_place:
+          type: string
+          description: 'Map area name where the attacker was standing (m_szLastPlaceName: "BombsiteA", "Middle", "CTSpawn"...). Empty when there is no attacker or it could not be read.'
+          example: "Middle"
         victim_steamid:
           type: string
           description: 'The SteamID64 of the victim as a string. "0" for bots.'
@@ -731,6 +758,18 @@ components:
           type: string
           enum: ["CT", "TERRORIST", ""]
           description: "The side the victim was playing when they died."
+        victim_x:
+          type: number
+          description: "World X coordinate of the victim at the moment of death (horizontal plane only)."
+          example: -302.9
+        victim_y:
+          type: number
+          description: "World Y coordinate of the victim at the moment of death."
+          example: 1230.1
+        victim_place:
+          type: string
+          description: 'Map area name where the victim died (m_szLastPlaceName).'
+          example: "BombsiteA"
         assister_steamid:
           type: string
           description: 'The SteamID64 of the assister as a string. "0" when there was no assist.'

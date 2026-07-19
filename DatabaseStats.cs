@@ -216,6 +216,43 @@ namespace MatchZy
                 Log($"[CreateRequiredTablesSQLite - FATAL] matchzy_stats_players: {ex.Message}");
             }
 
+            // matchzy_stats_rounds: cabecera de cada ronda (motivo del fin de
+            // ronda, lado/equipo ganador, duracion, scores tras la ronda,
+            // bomba). players_rounds y duels la referencian via la FK
+            // compuesta sobre su clave natural. PK autoincrement + UNIQUE
+            // natural (matchid, mapnumber, round_number) para que el upsert de
+            // un round restore pise la misma fila. Se crea ANTES de
+            // players_rounds/duels porque ambas la referencian.
+            try
+            {
+                connection.Execute(@"
+                CREATE TABLE IF NOT EXISTS matchzy_stats_rounds (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    matchid INTEGER NOT NULL,
+                    mapnumber INTEGER NOT NULL,
+                    round_number INTEGER NOT NULL,
+                    reason INTEGER NOT NULL DEFAULT 0,
+                    reason_name TEXT NOT NULL DEFAULT '',
+                    winner_side TEXT NOT NULL DEFAULT '',
+                    winner_team TEXT NOT NULL DEFAULT '',
+                    winner_team_name TEXT NOT NULL DEFAULT '',
+                    round_duration INTEGER NOT NULL DEFAULT 0,
+                    team1_score INTEGER NOT NULL DEFAULT 0,
+                    team2_score INTEGER NOT NULL DEFAULT 0,
+                    bomb_planted INTEGER NOT NULL DEFAULT 0,
+                    bomb_site TEXT NOT NULL DEFAULT '',
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE (matchid, mapnumber, round_number),
+                    FOREIGN KEY (matchid) REFERENCES matchzy_stats_matches (matchid),
+                    FOREIGN KEY (matchid, mapnumber) REFERENCES matchzy_stats_maps (matchid, mapnumber)
+                )");
+                Log("[CreateRequiredTablesSQLite] matchzy_stats_rounds OK");
+            }
+            catch (Exception ex)
+            {
+                Log($"[CreateRequiredTablesSQLite - FATAL] matchzy_stats_rounds: {ex.Message}");
+            }
+
             // matchzy_stats_players_rounds: historial de stats DELTA por ronda,
             // usado por el backend externo (matchController.ts, handleRoundEnd)
             // para reflejar el estado del match en vivo en el frontend. El plugin
@@ -223,9 +260,29 @@ namespace MatchZy
             // escribe filas en ella, eso es responsabilidad exclusiva del backend
             // via el webhook round_end. `kast` acá es el booleano crudo
             // kast_this_round (0/1), no el porcentaje acumulado de
-            // matchzy_stats_players.kast.
+            // matchzy_stats_players.kast. La FK compuesta hacia la cabecera
+            // (matchzy_stats_rounds) usa la clave natural que ya es prefijo de
+            // la PK, por lo que no necesita columnas nuevas; obliga a que la
+            // cabecera de la ronda se escriba antes que los deltas.
             try
             {
+                // Migracion: la tabla vieja no tenia la FK hacia la cabecera y
+                // SQLite no permite agregar FKs por ALTER. Como el plugin nunca
+                // escribe filas aca (solo el backend, que usa MySQL), la tabla
+                // local se puede recrear sin perder datos reales.
+                bool playersRoundsWithoutFk = connection.ExecuteScalar<long>(@"
+                    SELECT CASE WHEN EXISTS (
+                        SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'matchzy_stats_players_rounds'
+                    ) AND NOT EXISTS (
+                        SELECT 1 FROM pragma_foreign_key_list('matchzy_stats_players_rounds')
+                        WHERE ""table"" = 'matchzy_stats_rounds'
+                    ) THEN 1 ELSE 0 END") == 1;
+                if (playersRoundsWithoutFk)
+                {
+                    Log("[CreateRequiredTablesSQLite] matchzy_stats_players_rounds sin FK a matchzy_stats_rounds detectada; se recrea");
+                    connection.Execute("DROP TABLE matchzy_stats_players_rounds");
+                }
+
                 connection.Execute(@"
                 CREATE TABLE IF NOT EXISTS matchzy_stats_players_rounds (
                     matchid INTEGER NOT NULL,
@@ -274,7 +331,9 @@ namespace MatchZy
                     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (matchid, mapnumber, round_number, steamid64),
                     FOREIGN KEY (matchid) REFERENCES matchzy_stats_matches (matchid),
-                    FOREIGN KEY (matchid, mapnumber) REFERENCES matchzy_stats_maps (matchid, mapnumber)
+                    FOREIGN KEY (matchid, mapnumber) REFERENCES matchzy_stats_maps (matchid, mapnumber),
+                    FOREIGN KEY (matchid, mapnumber, round_number)
+                        REFERENCES matchzy_stats_rounds (matchid, mapnumber, round_number)
                 )");
                 Log("[CreateRequiredTablesSQLite] matchzy_stats_players_rounds OK");
             }
@@ -289,9 +348,36 @@ namespace MatchZy
             // los mismos duelos viajan ademas en el campo `duels` del webhook
             // round_end para el consumidor externo. PK autoincrement porque no
             // hay clave natural (dos kills identicos en la misma ronda son
-            // legitimos); steamid64 en 0 = suicidio/mundo/bot.
+            // legitimos); steamid64 en 0 = suicidio/mundo/bot. La ronda a la
+            // que pertenece la referencia la FK compuesta natural
+            // (matchid, mapnumber, round_number) -> matchzy_stats_rounds,
+            // igual que en players_rounds: las mismas columnas sirven de
+            // referencia al padre y de claves de consulta, sin JOIN ni id
+            // surrogate intermedio.
             try
             {
+                // Migracion: se recrea la tabla si viene de un esquema previo -
+                // el intermedio con round_id, o el original sin FK a la
+                // cabecera (el JSON del duelo nunca cambio, solo el layout de
+                // la tabla). Es aceptable perder las filas viejas porque esos
+                // esquemas solo existieron en dev y los duelos se pueden
+                // repoblar desde los backups de ronda (matchzy_retry_stats) o
+                // desde el backend.
+                bool oldDuelsSchema = connection.ExecuteScalar<long>(@"
+                    SELECT CASE WHEN EXISTS (
+                        SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'matchzy_stats_duels'
+                    ) AND (EXISTS (
+                        SELECT 1 FROM pragma_table_info('matchzy_stats_duels') WHERE name = 'round_id'
+                    ) OR NOT EXISTS (
+                        SELECT 1 FROM pragma_foreign_key_list('matchzy_stats_duels')
+                        WHERE ""table"" = 'matchzy_stats_rounds'
+                    )) THEN 1 ELSE 0 END") == 1;
+                if (oldDuelsSchema)
+                {
+                    Log("[CreateRequiredTablesSQLite] matchzy_stats_duels con esquema viejo detectado; se recrea con FK a matchzy_stats_rounds");
+                    connection.Execute("DROP TABLE matchzy_stats_duels");
+                }
+
                 connection.Execute(@"
                 CREATE TABLE IF NOT EXISTS matchzy_stats_duels (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -302,9 +388,15 @@ namespace MatchZy
                     attacker_steamid64 INTEGER NOT NULL DEFAULT 0,
                     attacker_name TEXT NOT NULL DEFAULT '',
                     attacker_side TEXT NOT NULL DEFAULT '',
+                    attacker_x REAL NOT NULL DEFAULT 0,
+                    attacker_y REAL NOT NULL DEFAULT 0,
+                    attacker_place TEXT NOT NULL DEFAULT '',
                     victim_steamid64 INTEGER NOT NULL DEFAULT 0,
                     victim_name TEXT NOT NULL DEFAULT '',
                     victim_side TEXT NOT NULL DEFAULT '',
+                    victim_x REAL NOT NULL DEFAULT 0,
+                    victim_y REAL NOT NULL DEFAULT 0,
+                    victim_place TEXT NOT NULL DEFAULT '',
                     assister_steamid64 INTEGER NOT NULL DEFAULT 0,
                     assister_name TEXT NOT NULL DEFAULT '',
                     weapon TEXT NOT NULL DEFAULT '',
@@ -318,7 +410,9 @@ namespace MatchZy
                     kill_timestamp TEXT NOT NULL DEFAULT '',
                     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (matchid) REFERENCES matchzy_stats_matches (matchid),
-                    FOREIGN KEY (matchid, mapnumber) REFERENCES matchzy_stats_maps (matchid, mapnumber)
+                    FOREIGN KEY (matchid, mapnumber) REFERENCES matchzy_stats_maps (matchid, mapnumber),
+                    FOREIGN KEY (matchid, mapnumber, round_number)
+                        REFERENCES matchzy_stats_rounds (matchid, mapnumber, round_number)
                 )");
                 connection.Execute(@"
                 CREATE INDEX IF NOT EXISTS idx_duels_match_map_round
@@ -435,6 +529,43 @@ namespace MatchZy
                 Log($"[CreateRequiredTablesSQL - FATAL] matchzy_stats_players: {ex.Message}");
             }
 
+            // matchzy_stats_rounds: cabecera de cada ronda (motivo del fin de
+            // ronda, lado/equipo ganador, duracion, scores tras la ronda,
+            // bomba). players_rounds y duels la referencian via la FK
+            // compuesta sobre su clave natural. PK autoincrement + UNIQUE
+            // natural (matchid, mapnumber, round_number) para que el upsert de
+            // un round restore pise la misma fila. Se crea ANTES de
+            // players_rounds/duels porque ambas la referencian.
+            try
+            {
+                connection.Execute($@"
+                CREATE TABLE IF NOT EXISTS matchzy_stats_rounds (
+                    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                    matchid INT NOT NULL,
+                    mapnumber TINYINT(3) UNSIGNED NOT NULL,
+                    round_number SMALLINT UNSIGNED NOT NULL,
+                    reason SMALLINT NOT NULL DEFAULT 0,
+                    reason_name VARCHAR(64) NOT NULL DEFAULT '',
+                    winner_side VARCHAR(16) NOT NULL DEFAULT '',
+                    winner_team VARCHAR(8) NOT NULL DEFAULT '',
+                    winner_team_name VARCHAR(255) NOT NULL DEFAULT '',
+                    round_duration INT NOT NULL DEFAULT 0,
+                    team1_score SMALLINT NOT NULL DEFAULT 0,
+                    team2_score SMALLINT NOT NULL DEFAULT 0,
+                    bomb_planted TINYINT(1) NOT NULL DEFAULT 0,
+                    bomb_site VARCHAR(32) NOT NULL DEFAULT '',
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY uq_rounds_match_map_round (matchid, mapnumber, round_number),
+                    CONSTRAINT fk_rounds_map_ref FOREIGN KEY (matchid, mapnumber)
+                        REFERENCES matchzy_stats_maps (matchid, mapnumber)
+                )");
+                Log("[CreateRequiredTablesSQL] matchzy_stats_rounds OK");
+            }
+            catch (Exception ex)
+            {
+                Log($"[CreateRequiredTablesSQL - FATAL] matchzy_stats_rounds: {ex.Message}");
+            }
+
             // matchzy_stats_players_rounds: historial de stats DELTA por ronda,
             // usado por el backend externo (matchController.ts, handleRoundEnd)
             // para reflejar el estado del match en vivo en el frontend. El plugin
@@ -442,7 +573,11 @@ namespace MatchZy
             // escribe filas en ella, eso es responsabilidad exclusiva del backend
             // via el webhook round_end. `kast` acá es el booleano crudo
             // kast_this_round (0/1), no el porcentaje acumulado de
-            // matchzy_stats_players.kast.
+            // matchzy_stats_players.kast. La FK compuesta hacia la cabecera
+            // (matchzy_stats_rounds) usa la clave natural que ya es prefijo de
+            // la PK, por lo que no necesita columnas nuevas ni indice extra;
+            // obliga a que la cabecera de la ronda se escriba antes que los
+            // deltas.
             try
             {
                 connection.Execute($@"
@@ -494,7 +629,9 @@ namespace MatchZy
                     PRIMARY KEY (matchid, mapnumber, round_number, steamid64),
                     INDEX round_match_map_index (matchid, mapnumber),
                     CONSTRAINT fk_players_rounds_map_ref FOREIGN KEY (matchid, mapnumber)
-                        REFERENCES matchzy_stats_maps (matchid, mapnumber)
+                        REFERENCES matchzy_stats_maps (matchid, mapnumber),
+                    CONSTRAINT fk_players_rounds_round_ref FOREIGN KEY (matchid, mapnumber, round_number)
+                        REFERENCES matchzy_stats_rounds (matchid, mapnumber, round_number)
                 )");
                 Log("[CreateRequiredTablesSQL] matchzy_stats_players_rounds OK");
             }
@@ -503,15 +640,74 @@ namespace MatchZy
                 Log($"[CreateRequiredTablesSQL - FATAL] matchzy_stats_players_rounds: {ex.Message}");
             }
 
+            // Migracion: tablas players_rounds creadas antes de que existiera la
+            // cabecera no tienen la FK compuesta. El ALTER falla si hay filas
+            // huerfanas (rondas historicas sin cabecera); en ese caso solo se
+            // loguea - la FK quedara pendiente hasta poblar matchzy_stats_rounds
+            // (matchzy_retry_stats) o limpiar las filas viejas.
+            try
+            {
+                bool playersRoundsFkMissing = connection.ExecuteScalar<long>(@"
+                    SELECT CASE WHEN EXISTS (
+                        SELECT 1 FROM information_schema.tables
+                        WHERE table_schema = DATABASE() AND table_name = 'matchzy_stats_players_rounds'
+                    ) AND NOT EXISTS (
+                        SELECT 1 FROM information_schema.table_constraints
+                        WHERE table_schema = DATABASE() AND table_name = 'matchzy_stats_players_rounds'
+                          AND constraint_name = 'fk_players_rounds_round_ref'
+                    ) THEN 1 ELSE 0 END") == 1;
+                if (playersRoundsFkMissing)
+                {
+                    Log("[CreateRequiredTablesSQL] matchzy_stats_players_rounds sin FK a matchzy_stats_rounds; se agrega");
+                    connection.Execute(@"
+                        ALTER TABLE matchzy_stats_players_rounds
+                        ADD CONSTRAINT fk_players_rounds_round_ref FOREIGN KEY (matchid, mapnumber, round_number)
+                            REFERENCES matchzy_stats_rounds (matchid, mapnumber, round_number)");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log($"[CreateRequiredTablesSQL - WARN] No se pudo agregar la FK players_rounds -> rounds (probablemente filas historicas sin cabecera): {ex.Message}");
+            }
+
             // matchzy_stats_duels: un kill individual por fila. A diferencia de
             // matchzy_stats_players_rounds, esta tabla SI la escribe el plugin
             // (InsertDuelsAsync, solo con matchzy_stats_direct_save_enabled=1);
             // los mismos duelos viajan ademas en el campo `duels` del webhook
             // round_end para el consumidor externo. PK autoincrement porque no
             // hay clave natural (dos kills identicos en la misma ronda son
-            // legitimos); steamid64 en 0 = suicidio/mundo/bot.
+            // legitimos); steamid64 en 0 = suicidio/mundo/bot. La ronda a la
+            // que pertenece la referencia la FK compuesta natural
+            // (matchid, mapnumber, round_number) -> matchzy_stats_rounds,
+            // igual que en players_rounds: las mismas columnas sirven de
+            // referencia al padre y de claves de consulta, sin JOIN ni id
+            // surrogate intermedio.
             try
             {
+                // Migracion: se recrea la tabla si viene de un esquema previo -
+                // el intermedio con round_id, o el original sin FK a la
+                // cabecera. Es aceptable perder las filas viejas porque esos
+                // esquemas solo existieron en dev y los duelos se pueden
+                // repoblar desde los backups de ronda (matchzy_retry_stats) o
+                // desde el backend.
+                bool oldDuelsSchema = connection.ExecuteScalar<long>(@"
+                    SELECT CASE WHEN EXISTS (
+                        SELECT 1 FROM information_schema.tables
+                        WHERE table_schema = DATABASE() AND table_name = 'matchzy_stats_duels'
+                    ) AND (EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_schema = DATABASE() AND table_name = 'matchzy_stats_duels' AND column_name = 'round_id'
+                    ) OR NOT EXISTS (
+                        SELECT 1 FROM information_schema.key_column_usage
+                        WHERE table_schema = DATABASE() AND table_name = 'matchzy_stats_duels'
+                          AND referenced_table_name = 'matchzy_stats_rounds' AND column_name = 'round_number'
+                    )) THEN 1 ELSE 0 END") == 1;
+                if (oldDuelsSchema)
+                {
+                    Log("[CreateRequiredTablesSQL] matchzy_stats_duels con esquema viejo detectado; se recrea con FK a matchzy_stats_rounds");
+                    connection.Execute("DROP TABLE matchzy_stats_duels");
+                }
+
                 connection.Execute($@"
                 CREATE TABLE IF NOT EXISTS matchzy_stats_duels (
                     id BIGINT PRIMARY KEY AUTO_INCREMENT,
@@ -522,9 +718,15 @@ namespace MatchZy
                     attacker_steamid64 BIGINT NOT NULL DEFAULT 0,
                     attacker_name VARCHAR(255) NOT NULL DEFAULT '',
                     attacker_side VARCHAR(16) NOT NULL DEFAULT '',
+                    attacker_x FLOAT NOT NULL DEFAULT 0,
+                    attacker_y FLOAT NOT NULL DEFAULT 0,
+                    attacker_place VARCHAR(64) NOT NULL DEFAULT '',
                     victim_steamid64 BIGINT NOT NULL DEFAULT 0,
                     victim_name VARCHAR(255) NOT NULL DEFAULT '',
                     victim_side VARCHAR(16) NOT NULL DEFAULT '',
+                    victim_x FLOAT NOT NULL DEFAULT 0,
+                    victim_y FLOAT NOT NULL DEFAULT 0,
+                    victim_place VARCHAR(64) NOT NULL DEFAULT '',
                     assister_steamid64 BIGINT NOT NULL DEFAULT 0,
                     assister_name VARCHAR(255) NOT NULL DEFAULT '',
                     weapon VARCHAR(64) NOT NULL DEFAULT '',
@@ -539,7 +741,9 @@ namespace MatchZy
                     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     INDEX duels_match_map_round_index (matchid, mapnumber, round_number),
                     CONSTRAINT fk_duels_map_ref FOREIGN KEY (matchid, mapnumber)
-                        REFERENCES matchzy_stats_maps (matchid, mapnumber)
+                        REFERENCES matchzy_stats_maps (matchid, mapnumber),
+                    CONSTRAINT fk_duels_round_ref FOREIGN KEY (matchid, mapnumber, round_number)
+                        REFERENCES matchzy_stats_rounds (matchid, mapnumber, round_number)
                 )");
                 Log("[CreateRequiredTablesSQL] matchzy_stats_duels OK");
             }
@@ -845,6 +1049,72 @@ namespace MatchZy
             }
         }
 
+        // Upsert de la cabecera de ronda. Idempotente por la UNIQUE
+        // (matchid, mapnumber, round_number): un round restore o un reintento
+        // pisa la misma fila. Devuelve false si fallo; el caller no debe
+        // insertar duelos en ese caso (la FK compuesta hacia la cabecera los
+        // rechazaria de todas formas).
+        public async Task<bool> UpsertRoundAsync(long matchId, int mapNumber, MatchZyRoundHeader round)
+        {
+            await _dbLock.WaitAsync();
+            try
+            {
+                EnsureConnectionOpen();
+
+                string updateClause = @"
+                    reason = @reason, reason_name = @reasonName,
+                    winner_side = @winnerSide, winner_team = @winnerTeam, winner_team_name = @winnerTeamName,
+                    round_duration = @roundDuration, team1_score = @team1Score, team2_score = @team2Score,
+                    bomb_planted = @bombPlanted, bomb_site = @bombSite";
+                // La rama UPDATE reutiliza los mismos parametros nombrados del
+                // INSERT (valido en ambos dialectos), evitando VALUES()/alias
+                // que varian entre versiones de MySQL/MariaDB.
+                string conflictClause = (connection is SqliteConnection)
+                    ? $"ON CONFLICT (matchid, mapnumber, round_number) DO UPDATE SET {updateClause}"
+                    : $"ON DUPLICATE KEY UPDATE {updateClause}";
+
+                var args = new
+                {
+                    matchId,
+                    mapNumber,
+                    roundNumber = round.RoundNumber,
+                    reason = round.Reason,
+                    reasonName = round.ReasonName,
+                    winnerSide = round.WinnerSide,
+                    winnerTeam = round.WinnerTeam,
+                    winnerTeamName = round.WinnerTeamName,
+                    roundDuration = round.RoundDuration,
+                    team1Score = round.Team1Score,
+                    team2Score = round.Team2Score,
+                    bombPlanted = round.BombPlanted ? 1 : 0,
+                    bombSite = round.BombSite,
+                };
+
+                await connection.ExecuteAsync($@"
+                    INSERT INTO matchzy_stats_rounds (
+                        matchid, mapnumber, round_number, reason, reason_name,
+                        winner_side, winner_team, winner_team_name,
+                        round_duration, team1_score, team2_score, bomb_planted, bomb_site)
+                    VALUES (
+                        @matchId, @mapNumber, @roundNumber, @reason, @reasonName,
+                        @winnerSide, @winnerTeam, @winnerTeamName,
+                        @roundDuration, @team1Score, @team2Score, @bombPlanted, @bombSite)
+                    {conflictClause}", args);
+
+                Log($"[UpsertRoundAsync] Cabecera de ronda {round.RoundNumber} guardada para match {matchId} map {mapNumber}");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Log($"[UpsertRoundAsync - FATAL] Error guardando cabecera de matchId: {matchId} round: {round.RoundNumber} [ERROR]: {ex.Message}");
+                return false;
+            }
+            finally
+            {
+                _dbLock.Release();
+            }
+        }
+
         public async Task InsertDuelsAsync(long matchId, int mapNumber, int roundNumber, List<MatchZyDuel> duels)
         {
             await _dbLock.WaitAsync();
@@ -868,14 +1138,18 @@ namespace MatchZy
                     INSERT INTO matchzy_stats_duels (
                         matchid, mapnumber, round_number, round_time,
                         attacker_steamid64, attacker_name, attacker_side,
+                        attacker_x, attacker_y, attacker_place,
                         victim_steamid64, victim_name, victim_side,
+                        victim_x, victim_y, victim_place,
                         assister_steamid64, assister_name, weapon,
                         headshot, penetrated, noscope, thrusmoke, attacker_blind,
                         is_suicide, is_teamkill, kill_timestamp)
                     VALUES (
                         @matchId, @mapNumber, @roundNumber, @roundTime,
                         @attackerSteamId, @attackerName, @attackerSide,
+                        @attackerX, @attackerY, @attackerPlace,
                         @victimSteamId, @victimName, @victimSide,
+                        @victimX, @victimY, @victimPlace,
                         @assisterSteamId, @assisterName, @weapon,
                         @headshot, @penetrated, @noscope, @thrusmoke, @attackerBlind,
                         @isSuicide, @isTeamKill, @killTimestamp)";
@@ -890,9 +1164,15 @@ namespace MatchZy
                         attackerSteamId = long.TryParse(duel.AttackerSteamId, out long attackerId) ? attackerId : 0L,
                         attackerName = duel.AttackerName,
                         attackerSide = duel.AttackerSide,
+                        attackerX = duel.AttackerX,
+                        attackerY = duel.AttackerY,
+                        attackerPlace = duel.AttackerPlace,
                         victimSteamId = long.TryParse(duel.VictimSteamId, out long victimId) ? victimId : 0L,
                         victimName = duel.VictimName,
                         victimSide = duel.VictimSide,
+                        victimX = duel.VictimX,
+                        victimY = duel.VictimY,
+                        victimPlace = duel.VictimPlace,
                         assisterSteamId = long.TryParse(duel.AssisterSteamId, out long assisterId) ? assisterId : 0L,
                         assisterName = duel.AssisterName,
                         weapon = duel.Weapon,

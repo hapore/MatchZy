@@ -2,6 +2,7 @@ using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
 using CounterStrikeSharp.API.Core.Attributes.Registration;
 using CounterStrikeSharp.API.Modules.Commands;
+using CounterStrikeSharp.API.Modules.Utils;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -358,16 +359,46 @@ namespace MatchZy
 
             await database.UpdatePlayerStatsAsync(matchId, mapNumber, rawDict);
 
-            // Los duelos son per-round (no acumulativos como las stats de arriba):
-            // hay que reinsertar los de TODOS los backups de ronda del mapa, no
-            // solo el ultimo. Idempotente via DELETE+INSERT por ronda. Backups
-            // viejos sin `duels` deserializan a lista vacia y se saltan.
+            // Las cabeceras de ronda y los duelos son per-round (no acumulativos
+            // como las stats de arriba): hay que reinsertar los de TODOS los
+            // backups de ronda del mapa, no solo el ultimo. Idempotente via
+            // upsert de cabecera + DELETE+INSERT de duelos por ronda.
+            // Backups viejos sin los campos de cabecera deserializan con
+            // defaults; reason_name y winner_side se recalculan de los campos
+            // que siempre existieron (reason / winner.side).
             foreach (string roundFile in Directory.GetFiles(
                 Path.Combine(statsBackupRoot, matchId.ToString()),
                 $"matchzy_stats_{matchId}_{mapNumber}_round*.json"))
             {
                 MatchZyRoundEndedEvent? payload = TryDeserializeBackup(roundFile)?.WebhookPayload;
-                if (payload == null || payload.Duels.Count == 0) continue;
+                if (payload == null) continue;
+
+                string winnerSide = payload.WinnerSide;
+                if (winnerSide == "" && int.TryParse(payload.Winner.Side, out int winnerTeamNum))
+                {
+                    winnerSide = winnerTeamNum switch
+                    {
+                        (int)CsTeam.CounterTerrorist => "CT",
+                        (int)CsTeam.Terrorist => "TERRORIST",
+                        _ => "",
+                    };
+                }
+                MatchZyRoundHeader roundHeader = new()
+                {
+                    RoundNumber = payload.RoundNumber,
+                    Reason = payload.Reason,
+                    ReasonName = payload.ReasonName == "" ? GetRoundEndReasonName(payload.Reason) : payload.ReasonName,
+                    WinnerSide = winnerSide,
+                    WinnerTeam = payload.Winner.Team,
+                    WinnerTeamName = payload.WinnerTeamName,
+                    RoundDuration = payload.RoundTime,
+                    Team1Score = payload.StatsTeam1.Score,
+                    Team2Score = payload.StatsTeam2.Score,
+                    BombPlanted = payload.BombPlanted,
+                    BombSite = payload.BombSite,
+                };
+                bool roundHeaderSaved = await database.UpsertRoundAsync(matchId, mapNumber, roundHeader);
+                if (!roundHeaderSaved || payload.Duels.Count == 0) continue;
                 await database.InsertDuelsAsync(matchId, mapNumber, payload.RoundNumber, payload.Duels);
             }
 

@@ -689,7 +689,10 @@ namespace MatchZy
                 if (!isMatchLive) return HookResult.Continue;
                 CCSPlayerController? player = @event.Userid;
                 if (IsPlayerValid(player))
+                {
                     IncrementStat(playerBombPlants, player!.SteamID);
+                    RecordBombPlant(player);
+                }
                 return HookResult.Continue;
             });
 

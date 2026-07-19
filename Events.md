@@ -152,19 +152,29 @@ Fin de ronda con stats agregados de cada equipo.
   "round_number": 5,
   "round_time": 78,
   "reason": 9,
-  "winner": { "team": "team1", "side": "ct" },
+  "reason_name": "TerroristsWin",
+  "winner": { "team": "team1", "side": "2" },
+  "winner_side": "TERRORIST",
+  "winner_team_name": "TeamA",
+  "bomb_planted": true,
+  "bomb_site": "A",
   "team1": { "name": "TeamA", "score": 3, "players": [/* ... */] },
   "team2": { "name": "TeamB", "score": 2, "players": [/* ... */] },
   "duels": [
     {
-      "round_number": 5,
       "round_time": 23,
       "attacker_steamid": "76561198154367261",
       "attacker_name": "player1",
       "attacker_side": "CT",
+      "attacker_x": -512.3,
+      "attacker_y": 1044.7,
+      "attacker_place": "Middle",
       "victim_steamid": "76561198267412921",
       "victim_name": "player2",
       "victim_side": "TERRORIST",
+      "victim_x": -302.9,
+      "victim_y": 1230.1,
+      "victim_place": "BombsiteA",
       "assister_steamid": "76561198083439121",
       "assister_name": "player3",
       "weapon": "ak47",
@@ -181,9 +191,28 @@ Fin de ronda con stats agregados de cada equipo.
 }
 ```
 
+Campos de **cabecera de la ronda** *(custom — Hapore)*, persistidos en la
+tabla `matchzy_stats_rounds` (una fila por ronda; los duelos y los deltas de
+`players_rounds` la referencian vía la FK compuesta `matchid`/`mapnumber`/
+`round_number`):
+
+- `round_time`: duración de la ronda en segundos, desde el freeze end hasta el
+  fin de la ronda (misma base de tiempo que el `round_time` de cada duelo).
+- `reason` / `reason_name`: código crudo del motor y su nombre estable según
+  el enum `RoundEndReason` de CS2 (`"TargetBombed"`, `"BombDefused"`,
+  `"CTsWin"`, `"TerroristsWin"`, `"TargetSaved"`...).
+- `winner_side`: `"CT"` / `"TERRORIST"` ya normalizado (en `winner.side` viaja
+  el team num crudo del motor). `winner_team_name`: nombre visible del equipo
+  ganador; `winner.team` sigue siendo `"team1"` / `"team2"`.
+- `bomb_planted` / `bomb_site`: si la bomba se plantó en la ronda y en qué
+  site (`"A"` / `"B"` / `""`). No se deduce de `reason`: los CT pueden ganar
+  por eliminación con la bomba ya plantada.
+
 `duels` *(custom — Hapore)*: lista de **kills individuales** de la ronda que
 termina, en orden cronológico. A diferencia de `players[].stats` (acumulado por
-mapa), cada duelo es un evento puntual:
+mapa), cada duelo es un evento puntual. La ronda a la que pertenecen la define
+el `round_number` del propio evento (los duelos ya no llevan número de ronda
+propio):
 
 - `round_time`: segundos desde el freeze end de la ronda (0 si la kill ocurre
   en freezetime).
@@ -191,6 +220,12 @@ mapa), cada duelo es un evento puntual:
   string. `"0"` = sin atacante real (suicidio, caída, mundo, C4) o bot. Si no
   hubo asister, `assister_steamid` es `"0"`.
 - `attacker_side` / `victim_side`: `"CT"`, `"TERRORIST"` o `""`.
+- `attacker_x`/`attacker_y` / `victim_x`/`victim_y`: posición de cada jugador
+  al momento de la kill, en unidades del mundo. Solo el plano horizontal (en
+  Source 2 la vertical es Z y no se captura): es lo necesario para pintar un
+  radar/heatmap 2D. `0`/`0` cuando no hay atacante o el pawn no es legible.
+- `attacker_place` / `victim_place`: nombre del área del mapa donde estaba
+  cada jugador (`m_szLastPlaceName`: `"BombsiteA"`, `"Middle"`, `"CTSpawn"`...).
 - `weapon`: nombre crudo del arma del motor (`"ak47"`, `"knife_butterfly"`,
   `"planted_c4"`, `"world"`...).
 - `penetrated`: la bala atravesó una superficie (wallbang); `noscope`,
@@ -198,10 +233,11 @@ mapa), cada duelo es un evento puntual:
   igual a la víctima; `is_teamkill`: attacker y víctima del mismo equipo.
 - `timestamp_utc`: instante ISO 8601 UTC de la kill.
 
-El plugin también persiste estos duelos en la tabla `matchzy_stats_duels`
-cuando `matchzy_stats_direct_save_enabled` está activo; con el guardado directo
-apagado, este campo del webhook es la única fuente para poblarla desde el
-backend.
+El plugin también persiste la cabecera en `matchzy_stats_rounds` y los duelos
+en `matchzy_stats_duels` (cuya columna `round_number` es la FK compuesta hacia
+la cabecera, agregada por el escritor — el JSON del duelo no la lleva) cuando
+`matchzy_stats_direct_save_enabled` está activo; con el guardado directo
+apagado, este webhook es la única fuente para poblarlas desde el backend.
 
 Cada jugador en `players[].stats` es **acumulado por mapa** (no un delta de la
 ronda), con dos excepciones/agregados a tener en cuenta:

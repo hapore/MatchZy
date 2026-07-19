@@ -1597,10 +1597,35 @@ namespace MatchZy
                     int currentMapNumber = matchConfig.CurrentMapNumber;
                     long matchId = liveMatchId;
                     int roundNumber = GetRoundNumer();
-                    List<MatchZyDuel> roundDuels = FlushCurrentRoundDuels(roundNumber);
+                    List<MatchZyDuel> roundDuels = FlushCurrentRoundDuels();
                     int ctTeamNum = reverseTeamSides["CT"] == matchzyTeam1 ? 1 : 2;
                     int tTeamNum = reverseTeamSides["TERRORIST"] == matchzyTeam1 ? 1 : 2;
                     Winner winner = new(@event.Winner.ToString(), t1score > t2score ? "team1" : "team2");
+
+                    // Cabecera de la ronda (matchzy_stats_rounds + campos de
+                    // nivel superior del webhook round_end). La duracion usa la
+                    // misma base que el round_time de los duelos (freeze end).
+                    int roundDuration = Math.Max(0, (int)(DateTime.UtcNow - currentRoundLiveStartUtc).TotalSeconds);
+                    string winnerSide = @event.Winner switch
+                    {
+                        (int)CsTeam.CounterTerrorist => "CT",
+                        (int)CsTeam.Terrorist => "TERRORIST",
+                        _ => "",
+                    };
+                    MatchZyRoundHeader roundHeader = new()
+                    {
+                        RoundNumber = roundNumber,
+                        Reason = @event.Reason,
+                        ReasonName = GetRoundEndReasonName(@event.Reason),
+                        WinnerSide = winnerSide,
+                        WinnerTeam = winner.Team,
+                        WinnerTeamName = winner.Team == "team1" ? matchzyTeam1.teamName : matchzyTeam2.teamName,
+                        RoundDuration = roundDuration,
+                        Team1Score = t1score,
+                        Team2Score = t2score,
+                        BombPlanted = currentRoundBombPlanted,
+                        BombSite = currentRoundBombSite,
+                    };
 
                     var roundEndEvent = new MatchZyRoundEndedEvent
                     {
@@ -1608,8 +1633,13 @@ namespace MatchZy
                         MapNumber = matchConfig.CurrentMapNumber,
                         RoundNumber = roundNumber,
                         Reason = @event.Reason,
-                        RoundTime = 0,
+                        ReasonName = roundHeader.ReasonName,
+                        RoundTime = roundDuration,
                         Winner = winner,
+                        WinnerSide = roundHeader.WinnerSide,
+                        WinnerTeamName = roundHeader.WinnerTeamName,
+                        BombPlanted = roundHeader.BombPlanted,
+                        BombSite = roundHeader.BombSite,
                         StatsTeam1 = new MatchZyStatsTeam(matchzyTeam1.id, matchzyTeam1.teamName, 0, t1score, 0, 0, playerStatsListTeam1),
                         StatsTeam2 = new MatchZyStatsTeam(matchzyTeam2.id, matchzyTeam2.teamName, 0, t2score, 0, 0, playerStatsListTeam2),
                         Duels = roundDuels,
@@ -1635,7 +1665,12 @@ namespace MatchZy
                             EnsureDatabaseInitialized();
                             await database.UpdatePlayerStatsAsync(matchId, currentMapNumber, playerStatsDictionary);
                             await database.UpdateMapStatsAsync(matchId, currentMapNumber, t1score, t2score);
-                            await database.InsertDuelsAsync(matchId, currentMapNumber, roundNumber, roundDuels);
+                            // La cabecera va primero: los duelos la referencian
+                            // via la FK compuesta (si el upsert fallo se
+                            // omiten, la FK los rechazaria de todas formas).
+                            bool roundHeaderSaved = await database.UpsertRoundAsync(matchId, currentMapNumber, roundHeader);
+                            if (roundHeaderSaved)
+                                await database.InsertDuelsAsync(matchId, currentMapNumber, roundNumber, roundDuels);
                         }
                     });
 

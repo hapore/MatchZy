@@ -239,14 +239,14 @@ public class MatchZyStatsTeam : MatchZyTeamWrapper
 
 // Un "duelo" = un kill individual capturado en EventPlayerDeath. Viaja en la
 // lista `duels` del evento round_end y se persiste en matchzy_stats_duels.
+// La ronda a la que pertenece NO viaja por duelo: la define el round_number
+// del propio evento round_end; en la BD la columna round_number la agrega el
+// escritor y es la FK compuesta hacia la cabecera (matchzy_stats_rounds).
 // Props mutables con defaults (sin `required`): los backups de ronda viejos
-// (RoundStatsBackupFile.WebhookPayload) no traen este campo y deben seguir
-// deserializando; RoundNumber ademas se asigna recien en el flush de round end.
+// (RoundStatsBackupFile.WebhookPayload) no traen todos los campos y deben
+// seguir deserializando.
 public class MatchZyDuel
 {
-    [JsonPropertyName("round_number")]
-    public int RoundNumber { get; set; }
-
     // Segundos desde el freeze end de la ronda (0 si la kill ocurre en freezetime).
     [JsonPropertyName("round_time")]
     public int RoundTime { get; set; }
@@ -263,6 +263,20 @@ public class MatchZyDuel
     [JsonPropertyName("attacker_side")]
     public string AttackerSide { get; set; } = "";
 
+    // Posicion del atacante al momento de la kill, en unidades del mundo.
+    // Solo el plano horizontal: en Source 2 la vertical es Z (no Y), y para
+    // radar/heatmap 2D alcanza con X/Y. 0/0 = sin atacante o pawn no legible.
+    [JsonPropertyName("attacker_x")]
+    public float AttackerX { get; set; }
+
+    [JsonPropertyName("attacker_y")]
+    public float AttackerY { get; set; }
+
+    // Nombre del area del mapa donde estaba el atacante (m_szLastPlaceName
+    // del pawn: "BombsiteA", "Middle"...). "" si no hay atacante o no se pudo leer.
+    [JsonPropertyName("attacker_place")]
+    public string AttackerPlace { get; set; } = "";
+
     [JsonPropertyName("victim_steamid")]
     public string VictimSteamId { get; set; } = "0";
 
@@ -271,6 +285,15 @@ public class MatchZyDuel
 
     [JsonPropertyName("victim_side")]
     public string VictimSide { get; set; } = "";
+
+    [JsonPropertyName("victim_x")]
+    public float VictimX { get; set; }
+
+    [JsonPropertyName("victim_y")]
+    public float VictimY { get; set; }
+
+    [JsonPropertyName("victim_place")]
+    public string VictimPlace { get; set; } = "";
 
     [JsonPropertyName("assister_steamid")]
     public string AssisterSteamId { get; set; } = "0";
@@ -307,4 +330,27 @@ public class MatchZyDuel
     // ISO 8601 UTC del momento de la kill.
     [JsonPropertyName("timestamp_utc")]
     public string TimestampUtc { get; set; } = "";
+}
+
+// Cabecera de una ronda para matchzy_stats_rounds (Database.UpsertRoundAsync).
+// No viaja como objeto propio en el webhook: sus campos van en el nivel
+// superior del evento round_end (reason, reason_name, winner, winner_side,
+// round_time, scores, bomb_planted, bomb_site); este DTO existe para que el
+// guardado directo y la restauracion desde backup compartan la misma firma.
+public class MatchZyRoundHeader
+{
+    public int RoundNumber { get; set; }
+    public int Reason { get; set; }
+    public string ReasonName { get; set; } = "";
+    public string WinnerSide { get; set; } = "";
+    // "team1" | "team2"
+    public string WinnerTeam { get; set; } = "";
+    public string WinnerTeamName { get; set; } = "";
+    // Segundos desde el freeze end hasta el fin de la ronda.
+    public int RoundDuration { get; set; }
+    // Score del mapa DESPUES de contabilizar esta ronda.
+    public int Team1Score { get; set; }
+    public int Team2Score { get; set; }
+    public bool BombPlanted { get; set; }
+    public string BombSite { get; set; } = "";
 }
