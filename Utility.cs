@@ -1319,11 +1319,20 @@ namespace MatchZy
             Task? pendingRoundTask = _lastRoundStatsTask;
             int expectedPlayers = _lastRoundExpectedPlayerCount;
 
+            // Ganador del MAPA para el evento map_result. Sin overtime el mapa
+            // puede terminar empatado: en ese caso winner viaja vacio (""/"")
+            // y el backend lo registra como empate, en vez del team2 espurio
+            // que producia el ternario anterior (t1 > t2 ? team1 : team2).
+            Team? mapWinnerTeam = t1score > t2score ? matchzyTeam1 : t2score > t1score ? matchzyTeam2 : null;
+            Winner mapWinner = mapWinnerTeam == null
+                ? new Winner("", "")
+                : new Winner(reverseTeamSides["CT"] == mapWinnerTeam ? "3" : "2", mapWinnerTeam == matchzyTeam1 ? "team1" : "team2");
+
             var mapResultEvent = new MapResultEvent
             {
                 MatchId = liveMatchId,
                 MapNumber = currentMapNumber,
-                Winner = new Winner(t1score > t2score && reverseTeamSides["CT"] == matchzyTeam1 ? "3" : "2", t1score > t2score ? "team1" : "team2"),
+                Winner = mapWinner,
                 StatsTeam1 = new MatchZyStatsTeam(matchzyTeam1.id, matchzyTeam1.teamName, team1SeriesScore, t1score, 0, 0, new List<StatsPlayer>()),
                 StatsTeam2 = new MatchZyStatsTeam(matchzyTeam2.id, matchzyTeam2.teamName, team2SeriesScore, t2score, 0, 0, new List<StatsPlayer>())
             };
@@ -1396,33 +1405,40 @@ namespace MatchZy
             // Todo: Support BO3/BO5 in pugs as well
             if (!isMatchSetup)
             {
-                EndSeries(winnerName, restartDelay - 1, t1score, t2score);
+                // null = empate (EndSeries lo anuncia como tie y el guardado lo
+                // registra como "Draw"); pasar el string "Draw" como winnerName
+                // haria que se anuncie "Draw has won the match".
+                EndSeries(t1score == t2score ? null : winnerName, restartDelay - 1, t1score, t2score);
                 return;
             }
 
-            int remainingMaps = matchConfig.NumMaps - matchzyTeam1.seriesScore - matchzyTeam2.seriesScore;
+            // Mapas jugados = CurrentMapNumber + 1 (0-based). NO derivarlo de la
+            // suma de series scores: un mapa empatado (posible sin overtime) no
+            // le suma el punto de serie a nadie, y con esa cuenta el empate
+            // "no consumia" mapa - remainingMaps nunca llegaba a 0, ninguna
+            // rama llamaba a EndSeries y el flujo seguia hacia
+            // Maplist[CurrentMapNumber + 1], que en un BO1 no existe (throw
+            // dentro del handler de win panel): la serie no terminaba nunca,
+            // no se emitian series_end / demo_window_end y el lobby quedaba
+            // colgado. Ver GetMatchWinnerName(): en empate no incrementa.
+            int remainingMaps = matchConfig.NumMaps - (currentMapNumber + 1);
             Log($"[HandleMatchEnd] MATCH ENDED, remainingMaps: {remainingMaps}, NumMaps: {matchConfig.NumMaps}, Team1SeriesScore: {matchzyTeam1.seriesScore}, Team2SeriesScore: {matchzyTeam2.seriesScore}");
-            if (matchzyTeam1.seriesScore == matchzyTeam2.seriesScore && remainingMaps <= 0)
+
+            // Ganador de la SERIE. No reutilizar winnerName (ganador del ultimo
+            // MAPA): en una serie sin clinch el ultimo mapa puede ganarlo el
+            // perdedor de la serie, y con empates puede ser "Draw" aunque la
+            // serie tenga lider. null = serie empatada.
+            string? seriesWinnerName = matchzyTeam1.seriesScore > matchzyTeam2.seriesScore
+                ? matchzyTeam1.teamName
+                : matchzyTeam2.seriesScore > matchzyTeam1.seriesScore ? matchzyTeam2.teamName : null;
+
+            int mapsToWinSeries = (matchConfig.NumMaps / 2) + 1;
+            bool seriesClinched = matchConfig.SeriesCanClinch &&
+                (matchzyTeam1.seriesScore >= mapsToWinSeries || matchzyTeam2.seriesScore >= mapsToWinSeries);
+
+            if (seriesClinched || remainingMaps <= 0)
             {
-                EndSeries(null, restartDelay - 1, t1score, t2score);
-            }
-            else if (matchConfig.SeriesCanClinch)
-            {
-                int mapsToWinSeries = (matchConfig.NumMaps / 2) + 1;
-                if (matchzyTeam1.seriesScore == mapsToWinSeries)
-                {
-                    EndSeries(winnerName, restartDelay - 1, t1score, t2score);
-                    return;
-                }
-                else if (matchzyTeam2.seriesScore == mapsToWinSeries)
-                {
-                    EndSeries(winnerName, restartDelay - 1, t1score, t2score);
-                    return;
-                }
-            }
-            else if (remainingMaps <= 0)
-            {
-                EndSeries(winnerName, restartDelay - 1, t1score, t2score);
+                EndSeries(seriesWinnerName, restartDelay - 1, t1score, t2score);
                 return;
             }
             if (matchzyTeam1.seriesScore > matchzyTeam2.seriesScore)
@@ -1600,18 +1616,24 @@ namespace MatchZy
                     List<MatchZyDuel> roundDuels = FlushCurrentRoundDuels();
                     int ctTeamNum = reverseTeamSides["CT"] == matchzyTeam1 ? 1 : 2;
                     int tTeamNum = reverseTeamSides["TERRORIST"] == matchzyTeam1 ? 1 : 2;
-                    Winner winner = new(@event.Winner.ToString(), t1score > t2score ? "team1" : "team2");
-
-                    // Cabecera de la ronda (matchzy_stats_rounds + campos de
-                    // nivel superior del webhook round_end). La duracion usa la
-                    // misma base que el round_time de los duelos (freeze end).
-                    int roundDuration = Math.Max(0, (int)(DateTime.UtcNow - currentRoundLiveStartUtc).TotalSeconds);
                     string winnerSide = @event.Winner switch
                     {
                         (int)CsTeam.CounterTerrorist => "CT",
                         (int)CsTeam.Terrorist => "TERRORIST",
                         _ => "",
                     };
+                    // El equipo ganador sale del lado que gano la ronda, no del
+                    // marcador acumulado (reverseTeamSides ya refleja el swap de
+                    // mitades).
+                    string winnerTeam = winnerSide == ""
+                        ? ""
+                        : reverseTeamSides[winnerSide] == matchzyTeam1 ? "team1" : "team2";
+                    Winner winner = new(@event.Winner.ToString(), winnerTeam);
+
+                    // Cabecera de la ronda (matchzy_stats_rounds + campos de
+                    // nivel superior del webhook round_end). La duracion usa la
+                    // misma base que el round_time de los duelos (freeze end).
+                    int roundDuration = Math.Max(0, (int)(DateTime.UtcNow - currentRoundLiveStartUtc).TotalSeconds);
                     MatchZyRoundHeader roundHeader = new()
                     {
                         RoundNumber = roundNumber,
@@ -1619,7 +1641,7 @@ namespace MatchZy
                         ReasonName = GetRoundEndReasonName(@event.Reason),
                         WinnerSide = winnerSide,
                         WinnerTeam = winner.Team,
-                        WinnerTeamName = winner.Team == "team1" ? matchzyTeam1.teamName : matchzyTeam2.teamName,
+                        WinnerTeamName = winner.Team == "team1" ? matchzyTeam1.teamName : winner.Team == "team2" ? matchzyTeam2.teamName : "",
                         RoundDuration = roundDuration,
                         Team1Score = t1score,
                         Team2Score = t2score,

@@ -626,12 +626,20 @@ namespace MatchZy
                 Server.PrintToChatAll($"{chatPrefix} {ChatColors.Green}{winnerName}{ChatColors.Default} has won the match");
             }
 
-            string winnerTeam = (winnerName == null) ? "none" : matchzyTeam1.seriesScore > matchzyTeam2.seriesScore ? "team1" : "team2";
+            // Ganador de la serie para el evento series_end. winnerName == null
+            // significa serie empatada (posible sin overtime): winner viaja como
+            // ("", "none") y el backend lo registra como empate. El side se
+            // deriva del equipo ganador real, no del score del ultimo mapa (el
+            // ternario anterior reportaba side "2" aunque team2 ganara como CT).
+            Team? seriesWinnerTeam = winnerName == null
+                ? null
+                : matchzyTeam1.seriesScore > matchzyTeam2.seriesScore ? matchzyTeam1 : matchzyTeam2;
+            string winnerTeam = seriesWinnerTeam == null ? "none" : seriesWinnerTeam == matchzyTeam1 ? "team1" : "team2";
 
             var seriesResultEvent = new MatchZySeriesResultEvent()
             {
                 MatchId = matchId,
-                Winner = new Winner(t1score > t2score && reverseTeamSides["CT"] == matchzyTeam1 ? "3" : "2", winnerTeam),
+                Winner = new Winner(seriesWinnerTeam == null ? "" : reverseTeamSides["CT"] == seriesWinnerTeam ? "3" : "2", winnerTeam),
                 Team1SeriesScore = team1Score,
                 Team2SeriesScore = team2Score,
                 TimeUntilRestore = 10,
