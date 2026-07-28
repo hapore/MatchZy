@@ -7,6 +7,32 @@ namespace MatchZy;
 
 public partial class MatchZy
 {
+    /**
+     * Armas cuerpo a cuerpo cuyo classname NO contiene "knife". En CS2 el
+     * `weapon` de EventPlayerDeath es el classname sin el prefijo `weapon_`, y
+     * todos los cuchillos lo llevan con "knife" adentro (knife, knife_t,
+     * knife_karambit, knife_m9_bayonet, knife_butterfly, knife_push, ...)
+     * MENOS la bayoneta, que es literalmente `weapon_bayonet`.
+     *
+     * Es la unica excepcion del juego, pero se deja como set para que sumar
+     * otra sea agregar una linea y no volver a tocar la condicion. `knifegg`
+     * (el cuchillo dorado de gungame) si contiene "knife", pero se lista igual
+     * por claridad: era el unico caso especial que habia antes.
+     */
+    private static readonly HashSet<string> MeleeWeaponsWithoutKnifeInName = new()
+    {
+        "bayonet",
+        "knifegg",
+    };
+
+    /**
+     * True si la kill fue con cuchillo. NO usar `weapon.Contains("knife")` a
+     * secas: las kills con bayoneta quedaban sin contar (verificado contra
+     * matchzy_stats_duels - 4 de 16 melee kills perdidas antes de este fix).
+     */
+    private static bool IsKnifeWeapon(string weapon) =>
+        weapon.Contains("knife") || MeleeWeaponsWithoutKnifeInName.Contains(weapon);
+
     public HookResult EventPlayerConnectFullHandler(EventPlayerConnectFull @event, GameEventInfo info)
     {
         try
@@ -371,7 +397,7 @@ public partial class MatchZy
                     if (!isSuicide && IsPlayerValid(attacker))
                     {
                         string weapon = @event.Weapon ?? "";
-                        if (weapon.Contains("knife") || weapon == "knifegg")
+                        if (IsKnifeWeapon(weapon))
                             IncrementStat(playerKnifeKills, attacker!.SteamID);
 
                         // KAST: K for attacker
