@@ -335,9 +335,6 @@ namespace MatchZy
                 Server.PrintToChatAll($"{chatPrefix} Map {i + 1 - mapNumber}: {matchConfig.Maplist[i]}.");
             }
 
-            string currentMapName = Server.MapName;
-            string mapToPlay = matchConfig.Maplist[0];
-
             // In case the sides don't match after selection, we check it here before writing the backup.
             // Also required if the map doesn't need to change.
             SetMapSides();
@@ -346,20 +343,19 @@ namespace MatchZy
                 playerReadyStatus[key] = false;
             }
 
-            if (IsMapReloadRequiredForGameMode(matchConfig.Wingman) || mapReloadRequired || currentMapName != mapToPlay) {
-
-                SetCorrectGameMode();
-                float delay = 7.0f;
-                mapChangePending = true;
-                // Todo: Implement displayGotvVeto cvar
-                // if (displayGotvVeto) {
-                //     delay += GetTvDelay();
-                // }
-                AddTimer(delay, () => {
-                    string nextMap = matchConfig.Maplist[matchConfig.CurrentMapNumber];
-                    ChangeMap(nextMap, 3);
-                });
-            }
+            // Cambio de mapa SIEMPRE, aunque el mapa elegido sea el que ya está cargado.
+            // Ver el comentario equivalente en MatchManagement.cs
+            SetCorrectGameMode();
+            float delay = 7.0f;
+            mapChangePending = true;
+            // Todo: Implement displayGotvVeto cvar
+            // if (displayGotvVeto) {
+            //     delay += GetTvDelay();
+            // }
+            AddTimer(delay, () => {
+                string nextMap = matchConfig.Maplist[matchConfig.CurrentMapNumber];
+                ChangeMap(nextMap, 3);
+            });
             isWarmup = true;
             readyAvailable = true;
             isPreVeto = false;

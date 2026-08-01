@@ -365,14 +365,15 @@ namespace MatchZy
                         }
                     }
                 }
-                string currentMapName = Server.MapName;
                 string mapName = matchConfig.Maplist[0].ToString();
 
-                if (IsMapReloadRequiredForGameMode(matchConfig.Wingman) || mapReloadRequired || currentMapName != mapName) 
-                {
-                    SetCorrectGameMode();
-                    ChangeMap(mapName, 0);
-                }
+                // Cambio de mapa SIEMPRE, aunque el mapa de la partida sea el que ya está cargado.
+                // CS2 degrada el estado de animación del nivel a medida que la sesión de mapa
+                // envejece (las animaciones de cambio de arma se reproducen en cámara lenta) y un
+                // servidor que se queda en standby en el mismo mapa nunca se recupera solo. Un
+                // `changelevel` lo subsana, así que toda partida arranca sobre un nivel fresco.
+                SetCorrectGameMode();
+                ChangeMap(mapName, 0);
             }
             else
             {
