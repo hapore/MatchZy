@@ -197,6 +197,42 @@ public class MatchCancelledEvent : MatchZyMatchEvent
     }
 }
 
+/// <summary>Un jugador que estuvo desconectado más de lo tolerado en un mapa.</summary>
+public class AbandonedPlayer
+{
+    [JsonPropertyName("steamid64")]
+    public required string SteamId64 { get; init; }
+
+    /// <summary>Mapa en el que superó el umbral (el primero, si fue en varios).</summary>
+    [JsonPropertyName("mapnumber")]
+    public required int MapNumber { get; init; }
+
+    [JsonPropertyName("mapname")]
+    public required string MapName { get; init; }
+
+    /// <summary>Segundos acumulados fuera del servidor en ESE mapa.</summary>
+    [JsonPropertyName("disconnected_seconds")]
+    public required int DisconnectedSeconds { get; init; }
+}
+
+/// <summary>
+/// Disparado al terminar la serie con los jugadores que estuvieron desconectados
+/// más de `matchzy_abandon_threshold_seconds` dentro de algún mapa.
+///
+/// Se emite en `series_end` y no al cerrar cada mapa a propósito: sancionar a
+/// mitad de un BO3 dejaría la serie incompleta para los otros nueve. Cada
+/// jugador aparece UNA sola vez aunque haya abandonado varios mapas.
+/// </summary>
+public class MatchZyPlayersAbandonedEvent : MatchZyMatchEvent
+{
+    [JsonPropertyName("players")]
+    public required List<AbandonedPlayer> Players { get; init; }
+
+    public MatchZyPlayersAbandonedEvent() : base("players_abandoned")
+    {
+    }
+}
+
 public class MatchZyRoundEndedEvent : MatchZyTimedRoundEvent
 {
 

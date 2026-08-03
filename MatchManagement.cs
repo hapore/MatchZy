@@ -646,6 +646,11 @@ namespace MatchZy
                 TimeUntilRestore = 10,
             };
 
+            // Abandonos de toda la serie. Se arma en el hilo del juego (limpia el
+            // estado de paso) y se envía DESPUÉS de series_end, para que el
+            // backend ya tenga la serie cerrada al registrar las sanciones.
+            var abandonEvent = BuildAbandonEvent(matchId);
+
             Task.Run(async () => {
                 if (isStatsDirectSaveEnabled)
                 {
@@ -655,6 +660,8 @@ namespace MatchZy
                 // Making sure that map end event is fired first
                 await Task.Delay(2000);
                 await SendEventAsync(seriesResultEvent);
+
+                if (abandonEvent != null) await SendEventAsync(abandonEvent);
             });
 
             if (resetCvarsOnSeriesEnd) ResetChangedConvars();

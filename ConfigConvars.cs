@@ -34,6 +34,8 @@ namespace MatchZy
         public FakeConVar<int> matchStartCountdownCvar = new("matchzy_match_start_countdown", "Seconds of countdown shown in chat once all expected players are connected (URL-loaded matches). Default: 10", 10);
         public FakeConVar<int> playerWaitSecondsThresholdCvar = new("matchzy_player_wait_seconds_threshold", "When the remaining player-wait time is less than or equal to this value (seconds), reminder messages switch from once-per-minute to once-per-second. Default: 30", 30);
 
+        public FakeConVar<int> abandonThresholdCvar = new("matchzy_abandon_threshold_seconds", "Accumulated disconnect seconds WITHIN A SINGLE MAP after which a player is reported as having abandoned (players_abandoned webhook, sent at series_end). The accumulator resets between maps. 0 disables. Default: 300", 300);
+
         [ConsoleCommand("matchzy_whitelist_enabled_default", "Whether Whitelist is enabled by default or not. Default value: false")]
         public void MatchZyWLConvar(CCSPlayerController? player, CommandInfo command)
         {

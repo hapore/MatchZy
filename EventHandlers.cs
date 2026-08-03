@@ -63,6 +63,9 @@ public partial class MatchZy
                 }
             }
 
+            // Cierra el intervalo de abandono si venía de una desconexión en vivo.
+            AbandonTrackReconnect(player);
+
             if (player.UserId.HasValue)
             {
                 playerData[player.UserId.Value] = player;
@@ -156,6 +159,10 @@ public partial class MatchZy
             if (!IsPlayerValid(player)) return HookResult.Continue;
             if (!player!.UserId.HasValue) return HookResult.Continue;
             int userId = player.UserId.Value;
+
+            // Antes de borrar al jugador de playerData: es el único momento en
+            // que todavía tenemos su controller para resolver el steamid.
+            AbandonTrackDisconnect(player);
 
             if (playerReadyStatus.ContainsKey(userId))
             {

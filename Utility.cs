@@ -576,6 +576,9 @@ namespace MatchZy
                 }
                 // Reset match data
                 ResetMatchStats();
+                // Sin esto, los abandonos de una partida cancelada se reportarían
+                // en la serie siguiente que se juegue en este servidor.
+                AbandonReset();
                 matchStarted = false;
                 readyAvailable = true;
                 isPaused = false;
@@ -790,6 +793,124 @@ namespace MatchZy
         }
 
         /// <summary>Returns "team1" / "team2" / "" depending on which config team the player belongs to.</summary>
+        // ── Detección de abandono ────────────────────────────────────────────
+
+        /// <summary>
+        /// Abre el intervalo de desconexión de un jugador de equipo. Sólo cuenta
+        /// con la partida en vivo: irse durante el warmup o entre mapas no es
+        /// abandonar nada.
+        ///
+        /// Los espectadores y admins quedan afuera por construcción, porque
+        /// `GetPlayerMatchTeamName` sólo mira team1/team2 del config.
+        /// </summary>
+        public void AbandonTrackDisconnect(CCSPlayerController player)
+        {
+            if (abandonThresholdCvar.Value <= 0) return;
+            if (!isMatchLive) return;
+            if (player.IsBot || player.IsHLTV) return;
+            if (string.IsNullOrEmpty(GetPlayerMatchTeamName(player))) return;
+
+            string steamId = player.SteamID.ToString();
+            // Si ya había un intervalo abierto (doble evento de desconexión), se
+            // conserva el original: reabrirlo perdería el tiempo ya transcurrido.
+            if (abandonOpenSince.ContainsKey(steamId)) return;
+
+            abandonOpenSince[steamId] = DateTime.UtcNow;
+            Log($"[Abandon] {steamId} se desconectó en vivo (mapa {matchConfig.CurrentMapNumber}).");
+        }
+
+        /// <summary>
+        /// Cierra el intervalo abierto de un jugador y suma los segundos al
+        /// acumulado del mapa actual. Idempotente: sin intervalo abierto no hace nada.
+        /// </summary>
+        public void AbandonTrackReconnect(CCSPlayerController player)
+        {
+            if (abandonThresholdCvar.Value <= 0) return;
+            if (player.IsBot || player.IsHLTV) return;
+
+            string steamId = player.SteamID.ToString();
+            if (!abandonOpenSince.TryGetValue(steamId, out DateTime since)) return;
+
+            abandonOpenSince.Remove(steamId);
+            int seconds = (int)Math.Max(0, (DateTime.UtcNow - since).TotalSeconds);
+            abandonAccumulated[steamId] = abandonAccumulated.GetValueOrDefault(steamId) + seconds;
+
+            Log($"[Abandon] {steamId} reconectó tras {seconds}s (acumulado en el mapa: {abandonAccumulated[steamId]}s).");
+        }
+
+        /// <summary>
+        /// Cierra el mapa: liquida los intervalos que sigan abiertos, evalúa el
+        /// acumulado contra el umbral y resetea el contador para el mapa siguiente.
+        ///
+        /// Cerrar los intervalos abiertos es indispensable: al que se va y NO
+        /// vuelve nadie le cierra el intervalo, y es justamente el peor caso.
+        ///
+        /// Se llama en el hilo del juego al terminar el mapa, antes de cualquier
+        /// reset de estado.
+        /// </summary>
+        public void AbandonFinalizeMap()
+        {
+            if (abandonThresholdCvar.Value <= 0) return;
+
+            DateTime now = DateTime.UtcNow;
+            foreach (var kv in abandonOpenSince)
+            {
+                int seconds = (int)Math.Max(0, (now - kv.Value).TotalSeconds);
+                abandonAccumulated[kv.Key] = abandonAccumulated.GetValueOrDefault(kv.Key) + seconds;
+                Log($"[Abandon] {kv.Key} nunca reconectó: se cierran {seconds}s contra el fin del mapa.");
+            }
+            abandonOpenSince.Clear();
+
+            int threshold = abandonThresholdCvar.Value;
+            int mapNumber = matchConfig.CurrentMapNumber;
+            string mapName = Server.MapName ?? "";
+
+            foreach (var kv in abandonAccumulated)
+            {
+                if (kv.Value < threshold) continue;
+                // Se conserva el PRIMER mapa donde superó el umbral: una falta
+                // por serie, sin importar en cuántos mapas haya abandonado.
+                if (abandonFlagged.ContainsKey(kv.Key)) continue;
+
+                abandonFlagged[kv.Key] = (mapNumber, mapName, kv.Value);
+                Log($"[Abandon] {kv.Key} marcado por abandono: {kv.Value}s >= {threshold}s (mapa {mapNumber} {mapName}).");
+            }
+
+            abandonAccumulated.Clear();
+        }
+
+        /// <summary>
+        /// Arma el evento de la serie y limpia el estado. Devuelve null si no
+        /// hubo abandonos, para no mandar un webhook vacío en cada partida.
+        /// </summary>
+        public MatchZyPlayersAbandonedEvent? BuildAbandonEvent(long matchId)
+        {
+            if (abandonFlagged.Count == 0)
+            {
+                AbandonReset();
+                return null;
+            }
+
+            var players = abandonFlagged.Select(kv => new AbandonedPlayer
+            {
+                SteamId64 = kv.Key,
+                MapNumber = kv.Value.MapNumber,
+                MapName = kv.Value.MapName,
+                DisconnectedSeconds = kv.Value.Seconds,
+            }).ToList();
+
+            AbandonReset();
+            return new MatchZyPlayersAbandonedEvent { MatchId = matchId, Players = players };
+        }
+
+        /// <summary>Limpia todo el estado de abandono (fin de serie / reset de match).</summary>
+        public void AbandonReset()
+        {
+            abandonAccumulated.Clear();
+            abandonOpenSince.Clear();
+            abandonFlagged.Clear();
+        }
+
         public string GetPlayerMatchTeamName(CCSPlayerController player)
         {
             string steamId = player.SteamID.ToString();
@@ -1318,6 +1439,11 @@ namespace MatchZy
             long matchId = liveMatchId;
             Task? pendingRoundTask = _lastRoundStatsTask;
             int expectedPlayers = _lastRoundExpectedPlayerCount;
+
+            // Cierra el acumulado de desconexión de ESTE mapa antes de que se
+            // resetee nada. Los que superaron el umbral quedan marcados y se
+            // reportan recién en series_end (ver AbandonFinalizeMap).
+            AbandonFinalizeMap();
 
             // Ganador del MAPA para el evento map_result. Sin overtime el mapa
             // puede terminar empatado: en ese caso winner viaja vacio (""/"")

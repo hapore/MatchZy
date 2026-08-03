@@ -95,6 +95,28 @@ namespace MatchZy
         /// <summary>True mientras hay un countdown activo (evita re-disparar StartMatchCountdown).</summary>
         public bool isCountdownActive = false;
 
+        // ── Detección de abandono ────────────────────────────────────────────
+        //
+        // Se lleva por steamid64 y NO en `playerData` porque ese diccionario
+        // está indexado por userId y el handler de desconexión borra la entrada
+        // — justo el dato que hace falta conservar mientras el jugador no está.
+        //
+        // El acumulado es POR MAPA: se resetea al cerrar cada mapa. Lo que
+        // sobrevive a la serie es `abandonFlagged`, para reportar una sola falta
+        // por más que el jugador abandone en varios mapas del BO3.
+
+        /// <summary>steamid64 → segundos acumulados fuera del servidor EN EL MAPA ACTUAL.</summary>
+        public Dictionary<string, int> abandonAccumulated = new();
+
+        /// <summary>steamid64 → instante de la desconexión (intervalo abierto, aún sin cerrar).</summary>
+        public Dictionary<string, DateTime> abandonOpenSince = new();
+
+        /// <summary>
+        /// steamid64 → datos del mapa donde superó el umbral. Se acumula durante
+        /// toda la serie y se vacía al emitir el evento en `series_end`.
+        /// </summary>
+        public Dictionary<string, (int MapNumber, string MapName, int Seconds)> abandonFlagged = new();
+
         /// <summary>
         /// UTC en que empezó el warmup actual (para forzar un mínimo de
         /// estabilización del engine antes de pasar a live). El engine de CS2
