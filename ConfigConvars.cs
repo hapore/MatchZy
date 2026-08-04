@@ -36,6 +36,10 @@ namespace MatchZy
 
         public FakeConVar<int> abandonThresholdCvar = new("matchzy_abandon_threshold_seconds", "Accumulated disconnect seconds WITHIN A SINGLE MAP after which a player is reported as having abandoned (players_abandoned webhook, sent at series_end). The accumulator resets between maps. 0 disables. Default: 300", 300);
 
+        public FakeConVar<int> abandonWarnIntervalCvar = new("matchzy_abandon_warn_interval", "Seconds between the chat reminders naming each disconnected player and the time left before they are reported. 0 disables the reminders. Default: 60", 60);
+
+        public FakeConVar<int> sideSelectionTimeoutCvar = new("matchzy_side_selection_timeout", "Seconds the knife-round winner has to pick .stay or .switch before the plugin picks one at random and starts the match. 0 waits forever (legacy behaviour). Default: 60", 60);
+
         [ConsoleCommand("matchzy_whitelist_enabled_default", "Whether Whitelist is enabled by default or not. Default value: false")]
         public void MatchZyWLConvar(CCSPlayerController? player, CommandInfo command)
         {

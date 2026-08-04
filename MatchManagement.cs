@@ -304,6 +304,10 @@ namespace MatchZy
             matchzyTeam1.teamPlayers = team1["players"];
             matchzyTeam2.teamPlayers = team2["players"];
 
+            // Capitán (opcional): quien decide el lado tras ganar el cuchillo.
+            matchzyTeam1.captain = team1["captain"]?.ToString() ?? "";
+            matchzyTeam2.captain = team2["captain"]?.ToString() ?? "";
+
             matchConfig = new()
             {
                 MatchId = liveMatchId,

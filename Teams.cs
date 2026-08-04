@@ -25,6 +25,17 @@ namespace MatchZy
         [JsonPropertyName("teamplayers")]
         public JToken? teamPlayers;
 
+        /// <summary>
+        /// SteamID64 del capitán del equipo, tomado del campo `captain` del match
+        /// config. Vacío si el config no lo define.
+        ///
+        /// Es quien decide `.stay`/`.switch` tras ganar el cuchillo. Si queda
+        /// vacío se cae al comportamiento histórico —cualquier jugador del equipo
+        /// ganador puede decidir— para no romper los configs armados a mano.
+        /// </summary>
+        [JsonPropertyName("captain")]
+        public string captain = "";
+
         [JsonIgnore, Newtonsoft.Json.JsonIgnore]
         public HashSet<CCSPlayerController> coach = [];
 

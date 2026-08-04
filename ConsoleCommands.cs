@@ -125,11 +125,14 @@ namespace MatchZy
             if (player == null || !isSideSelectionPhase) return;
 
             Log($"[!stay command] {player.UserId}, TeamNum: {player.TeamNum}, knifeWinner: {knifeWinner}, isSideSelectionPhase: {isSideSelectionPhase}");
-            if (player.TeamNum == knifeWinner)
+            if (CanDecideSide(player))
             {
-                PrintToAllChat(Localizer["matchzy.knife.decidedtostay", knifeWinnerName]);
-                // Server.PrintToChatAll($"{chatPrefix} {ChatColors.Green}{knifeWinnerName}{ChatColors.Default} has decided to stay!");
-                StartLive();
+                ApplySideDecision(stay: true);
+            }
+            else if (player.TeamNum == knifeWinner)
+            {
+                // Es del equipo ganador pero no es el capitán.
+                PrintToPlayerChat(player, "Sólo el capitán del equipo puede elegir el lado.");
             }
         }
 
@@ -141,13 +144,13 @@ namespace MatchZy
 
             Log($"[!switch command] {player.UserId}, TeamNum: {player.TeamNum}, knifeWinner: {knifeWinner}, isSideSelectionPhase: {isSideSelectionPhase}");
 
-            if (player.TeamNum == knifeWinner)
+            if (CanDecideSide(player))
             {
-                Server.ExecuteCommand("mp_swapteams;");
-                SwapSidesInTeamData(true);
-                PrintToAllChat(Localizer["matchzy.knife.decidedtoswitch", knifeWinnerName]);
-                // Server.PrintToChatAll($"{chatPrefix} {ChatColors.Green}{knifeWinnerName}{ChatColors.Default} has decided to switch!");
-                StartLive();
+                ApplySideDecision(stay: false);
+            }
+            else if (player.TeamNum == knifeWinner)
+            {
+                PrintToPlayerChat(player, "Sólo el capitán del equipo puede elegir el lado.");
             }
         }
 

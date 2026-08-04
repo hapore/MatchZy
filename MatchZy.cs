@@ -64,7 +64,6 @@ namespace MatchZy
 
         // Timers
         public CounterStrikeSharp.API.Modules.Timers.Timer? unreadyPlayerMessageTimer = null;
-        public CounterStrikeSharp.API.Modules.Timers.Timer? sideSelectionMessageTimer = null;
         public CounterStrikeSharp.API.Modules.Timers.Timer? pausedStateTimer = null;
 
         // Each message is kept in chat display for ~13 seconds, hence setting default chat timer to 13 seconds.
@@ -110,6 +109,24 @@ namespace MatchZy
 
         /// <summary>steamid64 → instante de la desconexión (intervalo abierto, aún sin cerrar).</summary>
         public Dictionary<string, DateTime> abandonOpenSince = new();
+
+        /// <summary>
+        /// steamid64 → nick, capturado AL DESCONECTARSE. Hace falta guardarlo
+        /// porque el aviso en chat lo nombra mientras está fuera, y para
+        /// entonces su controller ya no existe.
+        /// </summary>
+        public Dictionary<string, string> abandonNames = new();
+
+        /// <summary>
+        /// Generación del recordatorio de abandono. Los ticks one-shot ya
+        /// encolados con un id viejo se descartan solos — mismo mecanismo que
+        /// `playerWaitGeneration`, que reemplazó al Timer.REPEAT + Kill() que
+        /// estaba corrompiendo memoria del engine.
+        /// </summary>
+        public int abandonWarnGeneration = 0;
+
+        /// <summary>Generación de la fase de selección de lado (ver abandonWarnGeneration).</summary>
+        public int sideSelectionGeneration = 0;
 
         /// <summary>
         /// steamid64 → datos del mapa donde superó el umbral. Se acumula durante

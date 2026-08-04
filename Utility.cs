@@ -433,11 +433,107 @@ namespace MatchZy
             PrintToAllChat($"{ChatColors.Green}KNIFE!");
         }
 
-        private void SendSideSelectionMessage()
+        /// <summary>Equipo que ganó el cuchillo (el objeto Team, no el side).</summary>
+        public Team? GetKnifeWinnerTeam()
+        {
+            if (knifeWinner == 3) return reverseTeamSides.GetValueOrDefault("CT");
+            if (knifeWinner == 2) return reverseTeamSides.GetValueOrDefault("TERRORIST");
+            return null;
+        }
+
+        /// <summary>
+        /// ¿Este jugador puede decidir el lado?
+        ///
+        /// Tiene que ser del equipo que ganó el cuchillo y, si el match config
+        /// definió capitán, ser ese capitán. Sin capitán en el config se cae al
+        /// comportamiento histórico (cualquiera del equipo ganador) para no
+        /// romper los configs armados a mano.
+        /// </summary>
+        public bool CanDecideSide(CCSPlayerController player)
+        {
+            if (player.TeamNum != knifeWinner) return false;
+
+            string captain = GetKnifeWinnerTeam()?.captain ?? "";
+            if (string.IsNullOrEmpty(captain)) return true;
+
+            return player.SteamID.ToString() == captain;
+        }
+
+        /// <summary>
+        /// Un tick de la cuenta regresiva para elegir lado. Avisa a quién le toca
+        /// decidir y cuánto le queda; al llegar a cero elige al azar y arranca.
+        ///
+        /// Ticks one-shot que se reagendan solos, descartando los viejos por
+        /// generación: el Timer.REPEAT + Kill() desde el propio callback es el
+        /// patrón que venía corrompiendo memoria del engine.
+        /// </summary>
+        private void SideSelectionTick(int generation, int secondsLeft)
+        {
+            AddTimer(1.0f, () =>
+            {
+                if (generation != sideSelectionGeneration) return; // ya decidió
+                if (!isSideSelectionPhase) return;
+
+                int left = secondsLeft - 1;
+
+                if (left <= 0)
+                {
+                    // Nadie decidió: se elige al azar para no dejar la partida
+                    // colgada en un warmup infinito.
+                    bool stay = Random.Shared.Next(2) == 0;
+                    PrintToAllChat($"{ChatColors.Green}{knifeWinnerName}{ChatColors.Default} no eligió a tiempo: se decide al azar → {ChatColors.Green}{(stay ? ".stay" : ".switch")}{ChatColors.Default}");
+                    Log($"[SideSelection] Timeout: eleccion aleatoria {(stay ? "stay" : "switch")} para {knifeWinnerName}.");
+                    ApplySideDecision(stay);
+                    return;
+                }
+
+                // Recordatorio cada 10s y en los últimos 5.
+                if (left % 10 == 0 || left <= 5)
+                {
+                    string who = GetSideDecider();
+                    PrintToAllChat($"{ChatColors.Green}{who}{ChatColors.Default} debe elegir {ChatColors.Green}.stay{ChatColors.Default} o {ChatColors.Green}.switch{ChatColors.Default} — quedan {ChatColors.Green}{left}s{ChatColors.Default}");
+                }
+
+                SideSelectionTick(generation, left);
+            });
+        }
+
+        /// <summary>Nombre de quien debe decidir: el capitán si lo hay, si no el equipo.</summary>
+        private string GetSideDecider()
+        {
+            Team? team = GetKnifeWinnerTeam();
+            string captain = team?.captain ?? "";
+            if (string.IsNullOrEmpty(captain)) return knifeWinnerName;
+
+            foreach (var kv in playerData)
+            {
+                if (kv.Value.IsValid && kv.Value.SteamID.ToString() == captain) return kv.Value.PlayerName;
+            }
+            // El capitán no está conectado: igual se nombra al equipo, y si no
+            // vuelve a tiempo decide el azar.
+            return knifeWinnerName;
+        }
+
+        /// <summary>
+        /// Aplica la decisión de lado y arranca la partida. Único camino, lo use
+        /// el capitán con `.stay`/`.switch` o el timeout con su elección al azar.
+        /// </summary>
+        public void ApplySideDecision(bool stay)
         {
             if (!isSideSelectionPhase) return;
-            PrintToAllChat(Localizer["matchzy.knife.sidedecisionpending", knifeWinnerName]);
-            // Server.PrintToChatAll($"{chatPrefix} {ChatColors.Green}{knifeWinnerName}{ChatColors.Default} Won the knife. Waiting for them to type {ChatColors.Green}.stay{ChatColors.Default} or {ChatColors.Green}.switch{ChatColors.Default}");
+            sideSelectionGeneration++; // corta los ticks pendientes
+
+            if (stay)
+            {
+                PrintToAllChat(Localizer["matchzy.knife.decidedtostay", knifeWinnerName]);
+            }
+            else
+            {
+                Server.ExecuteCommand("mp_swapteams;");
+                SwapSidesInTeamData(true);
+                PrintToAllChat(Localizer["matchzy.knife.decidedtoswitch", knifeWinnerName]);
+            }
+            StartLive();
         }
 
         private void StartAfterKnifeWarmup()
@@ -446,9 +542,23 @@ namespace MatchZy
             ExecWarmupCfg();
             knifeWinnerName = knifeWinner == 3 ? reverseTeamSides["CT"].teamName : reverseTeamSides["TERRORIST"].teamName;
             ShowDamageInfo();
+
+            // El mensaje localizado habla del EQUIPO que ganó el cuchillo; quién
+            // decide se aclara aparte, porque con capitán no son lo mismo.
             PrintToAllChat(Localizer["matchzy.knife.sidedecisionpending", knifeWinnerName]);
-            // Server.PrintToChatAll($"{chatPrefix} {ChatColors.Green}{knifeWinnerName}{ChatColors.Default} Won the knife. Waiting for them to type {ChatColors.Green}.stay{ChatColors.Default} or {ChatColors.Green}.switch{ChatColors.Default}");
-            sideSelectionMessageTimer ??= AddTimer(chatTimerDelay, SendSideSelectionMessage, TimerFlags.REPEAT);
+
+            string decider = GetSideDecider();
+            if (decider != knifeWinnerName)
+            {
+                PrintToAllChat($"Sólo {ChatColors.Green}{decider}{ChatColors.Default} (capitán) puede elegir el lado.");
+            }
+
+            int timeout = sideSelectionTimeoutCvar.Value;
+            if (timeout > 0)
+            {
+                PrintToAllChat($"Hay {ChatColors.Green}{timeout}s{ChatColors.Default} para decidir, o se elige al azar.");
+                SideSelectionTick(++sideSelectionGeneration, timeout);
+            }
         }
 
         private void SetLiveFlags()
@@ -527,13 +637,11 @@ namespace MatchZy
         private void KillPhaseTimers()
         {
             unreadyPlayerMessageTimer?.Kill();
-            sideSelectionMessageTimer?.Kill();
             pausedStateTimer?.Kill();
             playerWaitTimeoutTimer?.Kill();
             playerWaitReminderTimer?.Kill();
             matchCountdownTimer?.Kill();
             unreadyPlayerMessageTimer = null;
-            sideSelectionMessageTimer = null;
             pausedStateTimer = null;
             playerWaitTimeoutTimer = null;
             playerWaitReminderTimer = null;
@@ -543,6 +651,9 @@ namespace MatchZy
             isCountdownActive = false;
             // Cancela cualquier tick one-shot del wait reminder que esté en cola.
             playerWaitGeneration++;
+            // Idem para la seleccion de lado y el recordatorio de abandono.
+            sideSelectionGeneration++;
+            abandonWarnGeneration++;
         }
 
         private (int alivePlayers, int totalHealth) GetAlivePlayers(int team)
@@ -816,7 +927,65 @@ namespace MatchZy
             if (abandonOpenSince.ContainsKey(steamId)) return;
 
             abandonOpenSince[steamId] = DateTime.UtcNow;
+            // El nick se guarda AHORA: mientras esté fuera no hay controller del
+            // que sacarlo, y el aviso en chat tiene que nombrarlo.
+            abandonNames[steamId] = player.PlayerName;
             Log($"[Abandon] {steamId} se desconectó en vivo (mapa {matchConfig.CurrentMapNumber}).");
+
+            // Primer aviso inmediato; los siguientes los reagenda el propio tick.
+            AbandonWarnTick(++abandonWarnGeneration, first: true);
+        }
+
+        /// <summary>
+        /// Segundos que le quedan a un jugador fuera antes de que se lo reporte,
+        /// contando el intervalo abierto además de lo ya acumulado en el mapa.
+        /// Devuelve 0 si ya superó el umbral.
+        /// </summary>
+        private int AbandonSecondsLeft(string steamId, DateTime now)
+        {
+            int accumulated = abandonAccumulated.GetValueOrDefault(steamId);
+            if (abandonOpenSince.TryGetValue(steamId, out DateTime since))
+            {
+                accumulated += (int)Math.Max(0, (now - since).TotalSeconds);
+            }
+            return Math.Max(0, abandonThresholdCvar.Value - accumulated);
+        }
+
+        /// <summary>
+        /// Un tick del recordatorio en chat: nombra a cada desconectado y cuánto
+        /// le queda. Se reagenda a sí mismo mientras haya alguien fuera.
+        ///
+        /// Los ticks viejos se descartan comparando la generación, en vez de
+        /// matar un Timer.REPEAT desde su propio callback — ese patrón es el que
+        /// venía provocando SIGSEGV del engine (ver ScheduleWaitReminderTick).
+        /// </summary>
+        private void AbandonWarnTick(int generation, bool first = false)
+        {
+            if (abandonWarnIntervalCvar.Value <= 0) return;
+
+            void Run()
+            {
+                if (generation != abandonWarnGeneration) return; // reemplazado
+                if (!isMatchLive || abandonOpenSince.Count == 0) return;
+
+                DateTime now = DateTime.UtcNow;
+                foreach (var kv in abandonOpenSince)
+                {
+                    int left = AbandonSecondsLeft(kv.Key, now);
+                    // Ya superó el umbral: el reporte es inevitable, no tiene
+                    // sentido seguir prometiéndole que puede evitarlo.
+                    if (left <= 0) continue;
+
+                    string name = abandonNames.GetValueOrDefault(kv.Key, kv.Key);
+                    int minutes = (int)Math.Ceiling(left / 60.0);
+                    PrintToAllChat($"{ChatColors.Green}{name}{ChatColors.Default} será sancionado si no vuelve antes de {ChatColors.Green}{minutes}{ChatColors.Default} minuto(s).");
+                }
+
+                AbandonWarnTick(generation);
+            }
+
+            if (first) Run();
+            else AddTimer(abandonWarnIntervalCvar.Value, Run);
         }
 
         /// <summary>
@@ -832,6 +1001,7 @@ namespace MatchZy
             if (!abandonOpenSince.TryGetValue(steamId, out DateTime since)) return;
 
             abandonOpenSince.Remove(steamId);
+            abandonNames.Remove(steamId);
             int seconds = (int)Math.Max(0, (DateTime.UtcNow - since).TotalSeconds);
             abandonAccumulated[steamId] = abandonAccumulated.GetValueOrDefault(steamId) + seconds;
 
@@ -860,6 +1030,8 @@ namespace MatchZy
                 Log($"[Abandon] {kv.Key} nunca reconectó: se cierran {seconds}s contra el fin del mapa.");
             }
             abandonOpenSince.Clear();
+            abandonNames.Clear();
+            abandonWarnGeneration++; // corta los ticks del recordatorio
 
             int threshold = abandonThresholdCvar.Value;
             int mapNumber = matchConfig.CurrentMapNumber;
@@ -908,7 +1080,9 @@ namespace MatchZy
         {
             abandonAccumulated.Clear();
             abandonOpenSince.Clear();
+            abandonNames.Clear();
             abandonFlagged.Clear();
+            abandonWarnGeneration++;
         }
 
         public string GetPlayerMatchTeamName(CCSPlayerController player)
