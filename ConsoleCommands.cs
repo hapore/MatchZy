@@ -120,11 +120,13 @@ namespace MatchZy
         }
 
         [ConsoleCommand("css_stay", "Stays after knife round")]
+        [ConsoleCommand("css_quedar", "Mantiene el bando tras la ronda de cuchillos")]
+        [ConsoleCommand("css_ficar", "Mantém o lado após a rodada de faca")]
         public void OnTeamStay(CCSPlayerController? player, CommandInfo? command)
         {
             if (player == null || !isSideSelectionPhase) return;
 
-            Log($"[!stay command] {player.UserId}, TeamNum: {player.TeamNum}, knifeWinner: {knifeWinner}, isSideSelectionPhase: {isSideSelectionPhase}");
+            Log($"[!stay command] {player.UserId}, TeamNum: {player.TeamNum}, knifeWinner: {knifeWinner}, isSideSelectionPhase: {isSideSelectionPhase}, steamid: {player.SteamID}, captain: '{GetKnifeWinnerTeam()?.captain ?? ""}'");
             if (CanDecideSide(player))
             {
                 ApplySideDecision(stay: true);
@@ -138,11 +140,13 @@ namespace MatchZy
 
         [ConsoleCommand("css_switch", "Switch after knife round")]
         [ConsoleCommand("css_swap", "Switch after knife round")]
+        [ConsoleCommand("css_cambiar", "Cambia de bando tras la ronda de cuchillos")]
+        [ConsoleCommand("css_trocar", "Troca de lado após a rodada de faca")]
         public void OnTeamSwitch(CCSPlayerController? player, CommandInfo? command)
         {
             if (player == null || !isSideSelectionPhase) return;
 
-            Log($"[!switch command] {player.UserId}, TeamNum: {player.TeamNum}, knifeWinner: {knifeWinner}, isSideSelectionPhase: {isSideSelectionPhase}");
+            Log($"[!switch command] {player.UserId}, TeamNum: {player.TeamNum}, knifeWinner: {knifeWinner}, isSideSelectionPhase: {isSideSelectionPhase}, steamid: {player.SteamID}, captain: '{GetKnifeWinnerTeam()?.captain ?? ""}'");
 
             if (CanDecideSide(player))
             {

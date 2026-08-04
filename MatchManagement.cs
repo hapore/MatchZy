@@ -307,6 +307,10 @@ namespace MatchZy
             // Capitán (opcional): quien decide el lado tras ganar el cuchillo.
             matchzyTeam1.captain = team1["captain"]?.ToString() ?? "";
             matchzyTeam2.captain = team2["captain"]?.ToString() ?? "";
+            // Se loguea siempre: sin capitán la elección de lado cae al modo
+            // clásico (decide cualquiera del equipo ganador), y sin esta línea
+            // no hay forma de distinguir ese fallback de un bug del chequeo.
+            Log($"[LoadMatchFromJSON] Capitanes: team1='{(matchzyTeam1.captain == "" ? "(ninguno)" : matchzyTeam1.captain)}', team2='{(matchzyTeam2.captain == "" ? "(ninguno)" : matchzyTeam2.captain)}'.");
 
             matchConfig = new()
             {

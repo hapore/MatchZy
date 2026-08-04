@@ -32,6 +32,23 @@ namespace MatchZy
             player.PrintToChat($"{chatPrefix} {message}");
         }
 
+        /// <summary>
+        /// Mensaje sólo para el equipo que ganó el cuchillo. Las instrucciones de
+        /// elección de lado (quién decide, el timeout y la cuenta regresiva) no le
+        /// sirven al equipo perdedor ni a los espectadores: para ellos alcanza con
+        /// el aviso de quién ganó y con la decisión final, que sí van a todos.
+        /// </summary>
+        private void PrintToKnifeWinnerChat(string message)
+        {
+            foreach (var kv in playerData)
+            {
+                CCSPlayerController player = kv.Value;
+                if (!IsPlayerValid(player)) continue;
+                if (player.TeamNum != knifeWinner) continue;
+                player.PrintToChat($"{chatPrefix} {message}");
+            }
+        }
+
         private void ReplyToUserCommand(CCSPlayerController? player, string message, bool console = false)
         {
             if (player == null)
@@ -481,9 +498,11 @@ namespace MatchZy
                     // Nadie decidió: se elige al azar para no dejar la partida
                     // colgada en un warmup infinito.
                     bool stay = Random.Shared.Next(2) == 0;
-                    PrintToAllChat($"{ChatColors.Green}{knifeWinnerName}{ChatColors.Default} no eligió a tiempo: se decide al azar → {ChatColors.Green}{(stay ? ".stay" : ".switch")}{ChatColors.Default}");
+                    // Este es el único anuncio del resultado: ApplySideDecision no
+                    // repite el "ha decidido..." porque acá no hubo decisión.
+                    PrintToAllChat($"{ChatColors.Green}{knifeWinnerName}{ChatColors.Default} no eligió a tiempo: se decide al azar → {ChatColors.Green}{(stay ? "mantener" : "cambiar")} bando{ChatColors.Default}");
                     Log($"[SideSelection] Timeout: eleccion aleatoria {(stay ? "stay" : "switch")} para {knifeWinnerName}.");
-                    ApplySideDecision(stay);
+                    ApplySideDecision(stay, announce: false);
                     return;
                 }
 
@@ -491,7 +510,7 @@ namespace MatchZy
                 if (left % 10 == 0 || left <= 5)
                 {
                     string who = GetSideDecider();
-                    PrintToAllChat($"{ChatColors.Green}{who}{ChatColors.Default} debe elegir {ChatColors.Green}.stay{ChatColors.Default} o {ChatColors.Green}.switch{ChatColors.Default} — quedan {ChatColors.Green}{left}s{ChatColors.Default}");
+                    PrintToKnifeWinnerChat($"{ChatColors.Green}{who}{ChatColors.Default} debe elegir {ChatColors.Green}.stay{ChatColors.Default} o {ChatColors.Green}.switch{ChatColors.Default} — quedan {ChatColors.Green}{left}s{ChatColors.Default}");
                 }
 
                 SideSelectionTick(generation, left);
@@ -517,21 +536,25 @@ namespace MatchZy
         /// <summary>
         /// Aplica la decisión de lado y arranca la partida. Único camino, lo use
         /// el capitán con `.stay`/`.switch` o el timeout con su elección al azar.
+        ///
+        /// <paramref name="announce"/> apaga el "ha decidido mantener/cambiar
+        /// bando": ese mensaje afirma que el equipo eligió, y en el camino del
+        /// timeout eso es falso —ahí ya se anunció que lo resolvió el azar—.
         /// </summary>
-        public void ApplySideDecision(bool stay)
+        public void ApplySideDecision(bool stay, bool announce = true)
         {
             if (!isSideSelectionPhase) return;
             sideSelectionGeneration++; // corta los ticks pendientes
 
             if (stay)
             {
-                PrintToAllChat(Localizer["matchzy.knife.decidedtostay", knifeWinnerName]);
+                if (announce) PrintToAllChat(Localizer["matchzy.knife.decidedtostay", knifeWinnerName]);
             }
             else
             {
                 Server.ExecuteCommand("mp_swapteams;");
                 SwapSidesInTeamData(true);
-                PrintToAllChat(Localizer["matchzy.knife.decidedtoswitch", knifeWinnerName]);
+                if (announce) PrintToAllChat(Localizer["matchzy.knife.decidedtoswitch", knifeWinnerName]);
             }
             StartLive();
         }
@@ -550,13 +573,13 @@ namespace MatchZy
             string decider = GetSideDecider();
             if (decider != knifeWinnerName)
             {
-                PrintToAllChat($"Sólo {ChatColors.Green}{decider}{ChatColors.Default} (capitán) puede elegir el lado.");
+                PrintToKnifeWinnerChat($"Sólo {ChatColors.Green}{decider}{ChatColors.Default} (capitán) puede elegir el lado.");
             }
 
             int timeout = sideSelectionTimeoutCvar.Value;
             if (timeout > 0)
             {
-                PrintToAllChat($"Hay {ChatColors.Green}{timeout}s{ChatColors.Default} para decidir, o se elige al azar.");
+                PrintToKnifeWinnerChat($"Hay {ChatColors.Green}{timeout}s{ChatColors.Default} para decidir, o se elige al azar.");
                 SideSelectionTick(++sideSelectionGeneration, timeout);
             }
         }
