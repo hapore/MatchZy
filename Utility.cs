@@ -228,6 +228,37 @@ namespace MatchZy
             }
         }
 
+        /// <summary>
+        /// Reaplica el CFG de warmup cuando el servidor deja de estar vacío.
+        ///
+        /// Verificado empíricamente: con el servidor vacío se pierden cvars del
+        /// warmup. Si el único jugador conectado se va y vuelve, las granadas
+        /// vuelven a ser comprables; si quedan dos y se va uno, la restricción
+        /// se mantiene. O sea que el disparador no es el changelevel sino que el
+        /// servidor toque cero jugadores — hibernación (`sv_hibernate_when_empty`)
+        /// o la reinicialización del game rules al despertar, que reejecuta los
+        /// gamemode_*.cfg y pisa lo nuestro.
+        ///
+        /// Esto cubre también el caso post-changelevel sin lógica aparte: tras un
+        /// cambio de mapa los jugadores reconectan, así que el primero en entrar
+        /// vuelve a pasar por acá.
+        /// </summary>
+        private void HandleFirstPlayerConnected()
+        {
+            if (!isWarmup || isPractice) return;
+
+            // Un segundo de margen: `exec` en Source 2 no aplica los cvars, encola
+            // las líneas en el buffer de consola. Ejecutar en el mismo tick del
+            // connect deja nuestro exec compitiendo contra lo que el engine encola
+            // al despertar.
+            AddTimer(1.0f, () =>
+            {
+                if (!isWarmup || isPractice) return;
+                Log("[HandleFirstPlayerConnected] Servidor salió de vacío, reaplicando warmup CFG");
+                ExecWarmupCfg();
+            });
+        }
+
         private void ExecWarmupCfg()
         {
             var absolutePath = Path.Join(Server.GameDirectory + "/csgo/cfg", warmupCfgPath);

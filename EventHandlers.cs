@@ -70,6 +70,16 @@ public partial class MatchZy
             {
                 playerData[player.UserId.Value] = player;
                 connectedPlayers++;
+
+                // Servidor saliendo de vacío: hay que reaplicar el CFG de warmup
+                // (el porqué está en HandleFirstPlayerConnected). Se cuentan los
+                // humanos realmente presentes en vez de usar `connectedPlayers`
+                // porque ese contador se incrementa acá sin condición pero solo
+                // se decrementa si el jugador estaba en playerReadyStatus, así
+                // que puede desfasarse hacia arriba.
+                int humansOnServer = Utilities.GetPlayers()
+                    .Count(p => IsPlayerValid(p) && !p.IsBot && !p.IsHLTV);
+                if (humansOnServer <= 1) HandleFirstPlayerConnected();
                 if (readyAvailable && !matchStarted)
                 {
                     // When a match config is loaded, auto-ready any player who belongs to team1 or team2
