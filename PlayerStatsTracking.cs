@@ -30,6 +30,39 @@ namespace MatchZy
         // ninguna ronda contabilizada).
         private List<MatchZyDuel> currentRoundDuels = new();
 
+        // ─── Clutches ─────────────────────────────────────────────────────────────
+        //
+        // CS2 solo lleva 1v1 y 1v2 (I1v1Count/I1v2Count de MatchStats), asi que
+        // 1v3/1v4/1v5 se calculan aca. Se lleva en vivo y no reconstruyendo desde
+        // los duelos: la lista de duelos descarta lo que llega despues del
+        // round_end (ver arriba), y ademas reconstruir obliga a inferir quien
+        // estaba vivo en vez de saberlo.
+        //
+        // QUE CUENTA: la situacion arranca en la TRANSICION, el instante en que
+        // un equipo pasa de dos o mas vivos a exactamente uno con al menos un
+        // enemigo en pie. El versus queda congelado ahi: quedar 1v3 y matar a uno
+        // sigue siendo el mismo 1v3, no abre un 1v2 nuevo.
+        //
+        // GANADO ES GANAR LA RONDA, no sobrevivir: matar a los tres y perder
+        // igual porque exploto el C4 es un clutch perdido.
+
+        /** Tope de la escala. Un 1v6 no existe, pero un reconecte raro no puede romper el array. */
+        public const int MaxClutchVersus = 5;
+
+        // Acumulado del MAPA, indexado [versus - 1]. Mismo criterio que el resto
+        // de las stats del payload, que son acumuladas por mapa.
+        private Dictionary<ulong, int[]> playerClutchCounts = new();
+        private Dictionary<ulong, int[]> playerClutchWins = new();
+
+        // Vivos de la ronda en curso, por TeamNum. Se toma en freeze end (la
+        // ronda pasa a live ahi) y no en round start: antes de eso puede haber
+        // gente sin spawnear o sin equipo asignado.
+        private Dictionary<int, HashSet<ulong>> aliveByTeam = new();
+
+        // Clutch abierto de cada equipo en la ronda: se resuelve en round end,
+        // cuando se sabe quien gano. Un equipo entra a lo sumo una vez.
+        private Dictionary<int, (ulong steamId, int versus)> pendingClutch = new();
+
         // Momento en que la ronda paso a live (freeze end). Base para el
         // round_time de cada duelo y para la duracion de la ronda en la
         // cabecera (matchzy_stats_rounds). Fallback en round start por si
@@ -144,6 +177,82 @@ namespace MatchZy
             currentRoundDuels.Add(duel);
         }
 
+        // ─── Clutches: seguimiento en vivo ────────────────────────────────────────
+
+        // Foto de quien arranca vivo, por equipo. Se llama en freeze end.
+        public void SnapshotAliveForRound()
+        {
+            aliveByTeam.Clear();
+            pendingClutch.Clear();
+
+            foreach (var player in Utilities.GetPlayers())
+            {
+                if (!IsPlayerValid(player)) continue;
+                // Espectadores y coaches no juegan la ronda.
+                if (player.TeamNum != (int)CsTeam.CounterTerrorist && player.TeamNum != (int)CsTeam.Terrorist) continue;
+                if (matchzyTeam1.coach.Contains(player) || matchzyTeam2.coach.Contains(player)) continue;
+
+                if (!aliveByTeam.TryGetValue(player.TeamNum, out var set))
+                {
+                    set = new HashSet<ulong>();
+                    aliveByTeam[player.TeamNum] = set;
+                }
+                set.Add(player.SteamID);
+            }
+        }
+
+        // Una muerte. Devuelve el clutch que se acaba de abrir, si se abrio.
+        public void RecordClutchDeath(CCSPlayerController victim)
+        {
+            if (!aliveByTeam.TryGetValue(victim.TeamNum, out var side)) return;
+            if (!side.Remove(victim.SteamID)) return;
+
+            // Solo puede abrirse en el equipo que acaba de perder a alguien.
+            if (side.Count != 1 || pendingClutch.ContainsKey(victim.TeamNum)) return;
+
+            int enemies = 0;
+            foreach (var (teamNum, players) in aliveByTeam)
+            {
+                if (teamNum != victim.TeamNum) enemies += players.Count;
+            }
+            if (enemies == 0) return;
+
+            ulong survivor = side.First();
+            pendingClutch[victim.TeamNum] = (survivor, Math.Min(MaxClutchVersus, enemies));
+        }
+
+        // Cierra los clutches de la ronda. `winnerTeamNum` es @event.Winner del
+        // round end: comparar TeamNum evita tener que resolver CT/TERRORIST.
+        public void FinalizeClutchesForRound(int winnerTeamNum)
+        {
+            foreach (var (teamNum, clutch) in pendingClutch)
+            {
+                if (!playerClutchCounts.TryGetValue(clutch.steamId, out var counts))
+                {
+                    counts = new int[MaxClutchVersus];
+                    playerClutchCounts[clutch.steamId] = counts;
+                }
+                counts[clutch.versus - 1]++;
+
+                if (teamNum != winnerTeamNum) continue;
+
+                if (!playerClutchWins.TryGetValue(clutch.steamId, out var wins))
+                {
+                    wins = new int[MaxClutchVersus];
+                    playerClutchWins[clutch.steamId] = wins;
+                }
+                wins[clutch.versus - 1]++;
+            }
+            pendingClutch.Clear();
+        }
+
+        // Acumulado del mapa para un jugador. `versus` va de 1 a MaxClutchVersus.
+        public int GetClutchCount(ulong steamId, int versus)
+            => playerClutchCounts.TryGetValue(steamId, out var v) ? v[versus - 1] : 0;
+
+        public int GetClutchWins(ulong steamId, int versus)
+            => playerClutchWins.TryGetValue(steamId, out var v) ? v[versus - 1] : 0;
+
         // Snapshot-and-swap: devuelve los duelos de la ronda que termina y deja
         // una lista nueva, para que el Task.Run de round end no comparta la
         // lista viva con el handler de kills.
@@ -207,6 +316,12 @@ namespace MatchZy
             kastFlags.Clear();
             recentDeaths.Clear();
             currentRoundDuels.Clear();
+            // Los clutches son acumulados POR MAPA, igual que el resto del
+            // payload: sin este clear se sumarian los del mapa anterior.
+            playerClutchCounts.Clear();
+            playerClutchWins.Clear();
+            aliveByTeam.Clear();
+            pendingClutch.Clear();
             currentRoundBombPlanted = false;
             currentRoundBombSite = "";
         }

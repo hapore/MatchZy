@@ -254,6 +254,9 @@ public partial class MatchZy
             if (!matchStarted) return HookResult.Continue;
             // Base del round_time de los duelos: la ronda pasa a live aqui.
             currentRoundLiveStartUtc = DateTime.UtcNow;
+            // Foto de quien arranca vivo, para los clutches. Va en freeze end y
+            // no en round start: antes puede haber gente sin spawnear.
+            if (isMatchLive) SnapshotAliveForRound();
             HashSet<CCSPlayerController> coaches = GetAllCoaches();
 
             foreach (var coach in coaches)
@@ -408,7 +411,13 @@ public partial class MatchZy
                     bool isCoachSuicide = isSuicide &&
                         (matchzyTeam1.coach.Contains(victim) || matchzyTeam2.coach.Contains(victim));
                     if (!isCoachSuicide)
+                    {
                         RecordDuel(@event, victim, attacker, assister, isSuicide);
+                        // Clutches: se lleva en vivo, no reconstruyendo desde los
+                        // duelos. Da igual como murio (bomba, caida, enemigo): lo
+                        // que importa es que deja de estar viva.
+                        RecordClutchDeath(victim);
+                    }
 
                     // Knife kill
                     if (!isSuicide && IsPlayerValid(attacker))

@@ -1962,6 +1962,9 @@ namespace MatchZy
                     ShowDamageInfo();
 
                     FinalizeKastForRound();
+                    // Cierra los clutches abiertos con el ganador de la ronda.
+                    // ANTES de GetPlayerStatsDict: es de ahi que salen al payload.
+                    FinalizeClutchesForRound(@event.Winner);
                     (Dictionary<ulong, Dictionary<string, object>> playerStatsDictionary, List<StatsPlayer> playerStatsListTeam1, List<StatsPlayer> playerStatsListTeam2) = GetPlayerStatsDict();
 
                     int currentMapNumber = matchConfig.CurrentMapNumber;
@@ -2612,10 +2615,14 @@ namespace MatchZy
                         { "Enemy5Ks", playerStats.Enemy5Ks },
                         { "EntryCount", playerStats.EntryCount },
                         { "EntryWins", playerStats.EntryWins },
-                        { "1v1Count", playerStats.I1v1Count },
-                        { "1v1Wins", playerStats.I1v1Wins },
-                        { "1v2Count", playerStats.I1v2Count },
-                        { "1v2Wins", playerStats.I1v2Wins },
+                        // Misma definicion que el payload (ver GetClutchWins):
+                        // si el guardado directo escribiera los de MatchStats y
+                        // el webhook los de este fork, v1_count saldria distinto
+                        // segun quien haya escrito ultimo.
+                        { "1v1Count", GetClutchCount(steamid64, 1) },
+                        { "1v1Wins", GetClutchWins(steamid64, 1) },
+                        { "1v2Count", GetClutchCount(steamid64, 2) },
+                        { "1v2Wins", GetClutchWins(steamid64, 2) },
                         { "UtilityCount", playerStats.Utility_Count },
                         { "UtilitySuccess", playerStats.Utility_Successes },
                         { "UtilityDamage", playerStats.UtilityDamage },
@@ -2689,11 +2696,17 @@ namespace MatchZy
                         Kills3 = playerStats.Enemy3Ks,
                         Kills4 = playerStats.Enemy4Ks,
                         Kills5 = playerStats.Enemy5Ks,
-                        OneV1s = playerStats.I1v1Wins,
-                        OneV2s = playerStats.I1v2Wins,
-                        OneV3s = 0,
-                        OneV4s = 0,
-                        OneV5s = 0,
+                        // Clutches de ESTE fork, no los de MatchStats. El motor
+                        // solo lleva 1v1 y 1v2, y ademas con otra definicion:
+                        // cuenta cada estado por el que pasas, asi que un 1v2 que
+                        // bajas a 1v1 le suma los dos. Aca cada jugador entra a lo
+                        // sumo una vez por ronda, con el versus congelado en el
+                        // momento en que quedo solo.
+                        OneV1s = GetClutchWins(steamid64, 1),
+                        OneV2s = GetClutchWins(steamid64, 2),
+                        OneV3s = GetClutchWins(steamid64, 3),
+                        OneV4s = GetClutchWins(steamid64, 4),
+                        OneV5s = GetClutchWins(steamid64, 5),
                         FirstKillsT = 0,
                         FirstKillsCT = 0,
                         FirstDeathsT = 0,
@@ -2712,8 +2725,11 @@ namespace MatchZy
                         HealthPointsDealtTotal = (int)playerStats.HealthPointsDealtTotal,
                         ShotsFiredTotal = playerStats.ShotsFiredTotal,
                         ShotsOnTargetTotal = playerStats.ShotsOnTargetTotal,
-                        V1Count = playerStats.I1v1Count,
-                        V2Count = playerStats.I1v2Count,
+                        V1Count = GetClutchCount(steamid64, 1),
+                        V2Count = GetClutchCount(steamid64, 2),
+                        V3Count = GetClutchCount(steamid64, 3),
+                        V4Count = GetClutchCount(steamid64, 4),
+                        V5Count = GetClutchCount(steamid64, 5),
                         EntryCount = playerStats.EntryCount,
                         EntryWins = playerStats.EntryWins,
                         EquipmentValue = playerStats.EquipmentValue,

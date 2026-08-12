@@ -173,6 +173,21 @@ public class PlayerStats
     [JsonPropertyName("v2_count")]
     public int V2Count { get; set; }
 
+    /**
+     * Intentos de clutch 1v3/1v4/1v5. No existen en Get5 ni en CS2 (el motor
+     * solo lleva 1v1 y 1v2 en MatchStats), son de este fork: se calculan en vivo
+     * en PlayerStatsTracking. Los GANADOS viajan en los campos `1v3`/`1v4`/`1v5`
+     * que ya estaban en el contrato y hasta ahora iban siempre en 0.
+     */
+    [JsonPropertyName("v3_count")]
+    public int V3Count { get; set; }
+
+    [JsonPropertyName("v4_count")]
+    public int V4Count { get; set; }
+
+    [JsonPropertyName("v5_count")]
+    public int V5Count { get; set; }
+
     [JsonPropertyName("entry_count")]
     public int EntryCount { get; set; }
 
