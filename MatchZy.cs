@@ -40,6 +40,21 @@ namespace MatchZy
 
         public bool mapReloadRequired = false;
 
+        // Latch de una sola vía: habilita reaplicar el CFG de warmup cuando el
+        // servidor sale de vacío. El ciclo de vida es
+        //   changelevel -> warmup -> cuchillo/live -> warmup (elección de lado) -> live
+        // y la reaplicación solo tiene sentido en el PRIMER warmup, que es el
+        // único donde el servidor puede quedar vacío mientras los jugadores van
+        // entrando. Lo prende StartWarmup() y lo apagan StartKnifeRound() y
+        // SetLiveFlags(); una vez cerrado no se reabre hasta el próximo mapa.
+        //
+        // Es un latch y no una lectura de fase a propósito: `isWarmup` vuelve a
+        // true en la elección de lado y en caminos como ResetMatch(), así que
+        // inferir la fase desde las flags dejaba huecos por los que se colaba un
+        // exec de warmup.cfg (con mp_warmup_start y bot_kick adentro) sobre una
+        // partida en curso.
+        public bool warmupCfgReapplyEnabled = false;
+
         // Pause Data
         public bool isPaused = false;
         public Dictionary<string, object> unpauseData = new Dictionary<string, object> {

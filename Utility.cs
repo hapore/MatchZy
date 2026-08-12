@@ -245,19 +245,38 @@ namespace MatchZy
         /// </summary>
         private void HandleFirstPlayerConnected()
         {
-            if (!isWarmup || isPractice) return;
+            if (!IsWarmupCfgReapplyAllowed()) return;
 
             // Un segundo de margen: `exec` en Source 2 no aplica los cvars, encola
             // las líneas en el buffer de consola. Ejecutar en el mismo tick del
             // connect deja nuestro exec compitiendo contra lo que el engine encola
             // al despertar.
+            //
+            // Se revalida adentro porque en ese segundo la fase puede cambiar.
             AddTimer(1.0f, () =>
             {
-                if (!isWarmup || isPractice) return;
+                if (!IsWarmupCfgReapplyAllowed()) return;
                 Log("[HandleFirstPlayerConnected] Servidor salió de vacío, reaplicando warmup CFG");
                 ExecWarmupCfg();
             });
         }
+
+        /// <summary>
+        /// ¿Es seguro reejecutar el CFG de warmup ahora?
+        ///
+        /// El que manda es `warmupCfgReapplyEnabled`: solo está abierto durante
+        /// el warmup inicial. `isWarmup` se chequea igual porque puede apagarse
+        /// sin cerrar el latch (modo sleep, por ejemplo), y solo puede restringir
+        /// más, nunca menos.
+        ///
+        /// `isRoundRestorePending` cubre un caso que el latch no ve: al restaurar
+        /// un backup con el servidor en warmup, el plugin deja el restore
+        /// pendiente y espera el ready de los jugadores (BackupManagement.cs,
+        /// rama `gameRules.WarmupPeriod`). Ahí seguimos en el warmup inicial con
+        /// el latch abierto, pero hay una partida con rondas jugadas esperando.
+        /// </summary>
+        private bool IsWarmupCfgReapplyAllowed() =>
+            warmupCfgReapplyEnabled && isWarmup && !isPractice && !isRoundRestorePending;
 
         private void ExecWarmupCfg()
         {
@@ -444,6 +463,8 @@ namespace MatchZy
             unreadyPlayerMessageTimer = null;
             unreadyPlayerMessageTimer ??= AddTimer(chatTimerDelay, SendUnreadyPlayersMessage, TimerFlags.REPEAT);
             isWarmup = true;
+            // Único punto que abre el latch: este es el warmup inicial.
+            warmupCfgReapplyEnabled = true;
             ExecWarmupCfg();
         }
 
@@ -461,6 +482,8 @@ namespace MatchZy
             isKnifeRound = true;
             readyAvailable = false;
             isWarmup = false;
+            // Se terminó el warmup inicial: a partir de acá no se reaplica más.
+            warmupCfgReapplyEnabled = false;
 
             var absolutePath = Path.Join(Server.GameDirectory + "/csgo/cfg", knifeCfgPath);
 
@@ -622,6 +645,9 @@ namespace MatchZy
             isSideSelectionPhase = false;
             matchStarted = true;
             isMatchLive = true;
+            // Cierra el latch también en el camino sin cuchillo, donde el warmup
+            // inicial va directo a live sin pasar por StartKnifeRound().
+            warmupCfgReapplyEnabled = false;
             readyAvailable = false;
             isKnifeRound = false;
         }
