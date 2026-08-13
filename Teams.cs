@@ -188,6 +188,19 @@ namespace MatchZy
             return false;
         }
 
+        /// <summary>
+        /// Saca un SteamID de team1, team2 o spectators. Devuelve true sólo si
+        /// realmente estaba en alguno.
+        ///
+        /// FIX: antes se retornaba `true` en la PRIMERA iteración del bucle,
+        /// hubiera borrado algo o no, ignorando el bool que devuelve `Remove()`.
+        /// Como `matchzyTeam1.teamPlayers` casi siempre es un JObject, nunca se
+        /// llegaba a mirar team2 ni spectators: sacar a un jugador de team2 no
+        /// borraba nada, devolvía éxito igual, y `OnRemovePlayerCommand` lo
+        /// kickeaba dejándolo fuera del servidor pero todavía listado en el
+        /// config —o sea, con permiso para volver a entrar y sin liberar el
+        /// lugar—. En la práctica el comando sólo funcionaba para team1.
+        /// </summary>
         public bool RemovePlayerFromTeam(string steamId)
         {
             List<JToken?> teams = [matchzyTeam1.teamPlayers, matchzyTeam2.teamPlayers, matchConfig.Spectators];
@@ -197,13 +210,11 @@ namespace MatchZy
                 if (team is null) continue;
                 if (team is JObject jObjectTeam)
                 {
-                    jObjectTeam.Remove(steamId);
-                    return true;
+                    if (jObjectTeam.Remove(steamId)) return true;
                 }
                 else if (team is JArray jArrayTeam)
                 {
-                    jArrayTeam.Remove(steamId);
-                    return true;
+                    if (jArrayTeam.Remove(steamId)) return true;
                 }
             }
             return false;
