@@ -55,6 +55,18 @@ namespace MatchZy
         [JsonPropertyName("match_side_type")]
         public string MatchSideType { get; set; } = "standard";
 
+        /// <summary>
+        /// true  = friendly fire competitivo, tal cual lo aplica el engine con las
+        ///         reducciones de ff_damage_reduction_*.
+        /// false = el plugin anula el daño entre compañeros salvo HE y molotov/incendiaria.
+        ///
+        /// La convar mp_friendlyfire se mantiene SIEMPRE en 1: apagarla en el engine
+        /// tambien mataria el daño de granadas, que es justamente lo que queremos conservar.
+        /// El filtro lo hace OnPlayerTakeDamagePreHandler en FriendlyFire.cs.
+        /// </summary>
+        [JsonPropertyName("friendly_fire")]
+        public bool FriendlyFire { get; set; } = true;
+
         [JsonPropertyName("changed_cvars")]
         public Dictionary<string, string> ChangedCvars { get; set; } = new();
 

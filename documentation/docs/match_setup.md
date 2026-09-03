@@ -58,12 +58,27 @@ There are 2 commands available which can be used to load a match:
   },
   "clinch_series": true,
   "players_per_team": 5,
+  "friendly_fire": false,
   "cvars": {
-    "hostname": "MatchZy: Astralis vs NaVi #27",
-    "mp_friendlyfire": "0"
+    "hostname": "MatchZy: Astralis vs NaVi #27"
   }
 }
 ```
+
+### `friendly_fire`
+
+Controls team damage for the series. Default: `true`.
+
+| Value | Behaviour |
+| --- | --- |
+| `true` | Competitive friendly fire. The engine applies it natively with the `ff_damage_reduction_*` values from the CFG (`bullets 0.33`, `grenade 0.85`, `grenade_self 1`, `other 0.4`). |
+| `false` | Team damage is nulled **except** HE grenades and molotov/incendiary, which keep their full competitive behaviour. Bullets, knife, zeus and direct grenade impacts do 0 damage to a teammate. |
+
+`mp_friendlyfire` is **always** kept at `1` on the server, no matter the value of this field. Turning it off in the engine would also kill grenade and fire damage between teammates, which is exactly what `friendly_fire: false` is meant to preserve; the filtering is done by the plugin instead.
+
+For backwards compatibility, `"mp_friendlyfire": "0"` inside `cvars` is still accepted and is translated into `friendly_fire: false` (the convar itself is forced back to `1`).
+
+`mp_autokick` is also ignored if sent inside `cvars`: with `friendly_fire: false` a teammate can still be killed by a molotov, and the CFGs keep it at `0` so nobody gets kicked for it. The money penalty (`cash_player_killed_teammate`) still applies.
 
 This file can be loaded using :
 

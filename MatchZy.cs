@@ -339,6 +339,8 @@ namespace MatchZy
                 { ".loadpos", OnLoadPosCommand}
             };
 
+            RegisterFriendlyFireListener();
+
             RegisterEventHandler<EventPlayerConnectFull>(EventPlayerConnectFullHandler);
             RegisterEventHandler<EventPlayerDisconnect>(EventPlayerDisconnectHandler);
             RegisterEventHandler<EventCsWinPanelRound>(EventCsWinPanelRoundHandler, hookMode: HookMode.Pre);

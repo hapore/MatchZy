@@ -264,6 +264,7 @@ namespace MatchZy
                     case "skip_veto":
                     case "clinch_series":
                     case "wingman":
+                    case "friendly_fire":
                         if (!bool.TryParse(jsonData[field]!.ToString(), out bool result))
                         {
                             return $"{field} should be a boolean!";
@@ -466,6 +467,24 @@ namespace MatchZy
                     string cvarName = cvarData.Name;
                     string cvarValue = cvarData.Value.ToString();
 
+                    // mp_friendlyfire no se aplica nunca tal cual: apagarla en el engine
+                    // tambien mata el daño de HE y molotov. Se traduce al flag del plugin
+                    // y la convar real queda en 1 (ver FriendlyFire.cs).
+                    if (cvarName == "mp_friendlyfire")
+                    {
+                        matchConfig.FriendlyFire = cvarValue is "1" or "true";
+                        cvarValue = "1";
+                        Log($"[GetCvarValues] mp_friendlyfire=\"{cvarData.Value}\" traducido a FriendlyFire={matchConfig.FriendlyFire} (la convar queda en 1).");
+                    }
+
+                    // El teamkill por granada sigue penalizando con dinero, pero nunca
+                    // debe expulsar: mp_autokick se fija en los CFG y no se sobreescribe.
+                    if (cvarName == "mp_autokick")
+                    {
+                        Log($"[GetCvarValues] Ignorando mp_autokick=\"{cvarValue}\" del config; lo fijan los CFG de MatchZy.");
+                        continue;
+                    }
+
                     var cvar = ConVar.Find(cvarName);
                     matchConfig.ChangedCvars[cvarName] = cvarValue;
                     if (cvar != null)
@@ -515,6 +534,11 @@ namespace MatchZy
             if (jsonDataObject["skip_veto"] != null)
             {
                 matchConfig.SkipVeto = bool.Parse(jsonDataObject["skip_veto"]!.ToString());
+            }
+            if (jsonDataObject["friendly_fire"] != null)
+            {
+                matchConfig.FriendlyFire = bool.Parse(jsonDataObject["friendly_fire"]!.ToString());
+                Log($"[LOADMATCH] FriendlyFire: {matchConfig.FriendlyFire}");
             }
             if (jsonDataObject["wingman"] != null)
             {
