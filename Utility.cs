@@ -1856,9 +1856,44 @@ namespace MatchZy
             // engine y provocan el crash del servidor (SIGSEGV / exit 139).
             Server.ExecuteCommand("mp_match_end_restart false");
 
+            // Identidad de la serie a la que pertenece el cambio de mapa agendado
+            // abajo. Ver el chequeo dentro del timer.
+            long scheduledMatchId = liveMatchId;
+            int scheduledMapNumber = matchConfig.CurrentMapNumber;
+
             AddTimer(restartDelay - 4, () =>
             {
                 if (!isMatchSetup) return;
+
+                // El `isMatchSetup` de arriba NO alcanza: sólo dice que HAY una
+                // partida montada, no que sea la nuestra. Cancelar una serie
+                // (`css_endmatch` -> ResetMatch) lo pone en false, pero el
+                // LoadMatchFromJSON de la partida SIGUIENTE lo vuelve a poner en
+                // true, y este timer —que sigue vivo, porque no está en
+                // KillPhaseTimers ni guardado en ningún campo— le cambiaba el mapa
+                // a una partida ajena.
+                //
+                // Pasó en producción: un BO3 terminó su mapa 1 y agendó
+                // `de_cache` para dentro de ~126 s (restartDelay = tvFlushDelay +
+                // 10, con tv_delay 105); a los pocos segundos un admin canceló la
+                // serie, entró un BO1 nuevo en `de_anubis`, y cuando el timer
+                // venció mandó el server a `de_cache`. La partida nueva se jugó
+                // entera en el mapa equivocado mientras el backend registraba
+                // `de_anubis` (matchid 1788574579).
+                //
+                // La ventana es de más de dos minutos en CADA cambio de mapa de un
+                // BO3/BO5, así que cualquier cancelación ahí adentro dejaba la
+                // bomba armada.
+                if (liveMatchId != scheduledMatchId)
+                {
+                    Log($"[HandleMatchEnd] Cambio de mapa a {nextMap} descartado: la serie {scheduledMatchId} ya no está en curso (ahora corre {liveMatchId}).");
+                    return;
+                }
+                if (matchConfig.CurrentMapNumber != scheduledMapNumber)
+                {
+                    Log($"[HandleMatchEnd] Cambio de mapa a {nextMap} descartado: el mapa de la serie {scheduledMatchId} avanzó de {scheduledMapNumber} a {matchConfig.CurrentMapNumber}.");
+                    return;
+                }
 
                 // Resetear estado ANTES del changelevel para que los timers del
                 // warmup que arranquen en OnMapStart vean el estado correcto.
@@ -1907,6 +1942,17 @@ namespace MatchZy
                 {
                     Server.ExecuteCommand($"bot_kick");
                     Server.ExecuteCommand($"changelevel \"{mapName}\"");
+                }
+                else
+                {
+                    // Antes esta rama era un no-op mudo, y es el peor final posible:
+                    // el `Log` de arriba ya anunció el cambio, `StopTvForMapChange`
+                    // ya cortó la GOTV, y el flujo que llamó sigue montando la
+                    // partida (warmup, cvars, nombres) sobre el mapa VIEJO. Desde
+                    // afuera se ve un arranque normal en el mapa equivocado, y como
+                    // ningún evento de MatchZy lleva el mapa realmente cargado, el
+                    // backend tampoco puede notarlo: registra el mapa que pidió.
+                    Log($"[ChangeMap] ERROR: '{mapName}' no es un mapa válido en este servidor y no es un id de workshop. El mapa NO se cambió; la partida va a seguir en '{Server.MapName}'.");
                 }
             });
         }
