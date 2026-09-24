@@ -18,7 +18,8 @@ namespace MatchZy
 {
     public class Database
     {
-        private IDbConnection connection;
+        // Se asigna en ConnectDatabase, llamado al inicio de InitializeDatabase.
+        private IDbConnection connection = null!;
 
         // Serializa todas las operaciones async de DB que comparten la misma
         // instancia de IDbConnection. Ni SqliteConnection ni MySqlConnection

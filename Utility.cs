@@ -1618,6 +1618,7 @@ namespace MatchZy
             // Hence returning from here until we find a proper solution
             return;
 
+#pragma warning disable CS0162 // Unreachable code: se conserva hasta encontrar una solución
             if (readyAvailable && !matchStarted)
             {
                 foreach (var key in playerData.Keys)
@@ -1648,6 +1649,7 @@ namespace MatchZy
                     Server.PrintToChatAll($"PlayerName: {playerData[key].PlayerName} Clan: {playerData[key].Clan}");
                 }
             }
+#pragma warning restore CS0162
         }
 
         private void HandleMatchEnd()
@@ -2930,7 +2932,7 @@ namespace MatchZy
             });
         }
 
-        public bool IsPlayerValid(CCSPlayerController? player)
+        public bool IsPlayerValid([System.Diagnostics.CodeAnalysis.NotNullWhen(true)] CCSPlayerController? player)
         {
             return (
                 player != null &&
@@ -2988,7 +2990,7 @@ namespace MatchZy
                 using FileStream fileStream = File.OpenRead(filePath);
 
                 byte[] fileContent = new byte[fileStream.Length];
-                await fileStream.ReadAsync(fileContent, 0, (int)fileStream.Length);
+                await fileStream.ReadExactlyAsync(fileContent);
 
                 using ByteArrayContent content = new(fileContent);
                 content.Headers.Add("Content-Type", "application/octet-stream");
