@@ -63,8 +63,6 @@ namespace MatchZy
             { "pauseTeam", "" }
         };
 
-        bool isPauseCommandForTactical = false;
-
         // Knife Data
         public int knifeWinner = 0;
         public string knifeWinnerName = "";
@@ -260,7 +258,6 @@ namespace MatchZy
                 { ".fp", OnForcePauseCommand },
                 { ".forceunpause", OnForceUnpauseCommand },
                 { ".fup", OnForceUnpauseCommand },
-                { ".tac", OnTacCommand },
                 { ".roundknife", OnKnifeCommand },
                 { ".rk", OnKnifeCommand },
                 { ".playout", OnPlayoutCommand },

@@ -20,6 +20,8 @@
   "matchzy.pause.pausedbecauserestore": "La partida se ha pausado por la restauración de ronda. Ambos equipos deben escribir {green}.unpause{default} para reanudar la partida.",
   "matchzy.pause.techpausenotenabled": "Las pausas técnicas no están activadas.",
   "matchzy.pause.notechpauseleft": "¡{green}{0}{default} no tiene más pausas técnicas!",
+  "matchzy.pause.teamcancelledpause": "{green}{0}{default} canceló su pausa, ¡reanudando la partida!",
+  "matchzy.pause.onlypausingteamcancancel": "Solo {green}{0}{default} puede cancelar su pausa antes de que termine.",
   "matchzy.pause.ispaused": "¡La partida ya se encuentra en pausa!",
   "matchzy.pause.duringhalftime": "No puedes ejecutar este comando durante el entretiempo.",
   "matchzy.pause.matchended": "No puedes ejecutar este comando una vez la partida ha finalizado.",

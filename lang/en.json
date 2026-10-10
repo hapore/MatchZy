@@ -20,6 +20,8 @@
   "matchzy.pause.pausedbecauserestore": "Match has been paused because of Round Restore. Both teams need to type {green}.unpause{default} to unpause the match.",
   "matchzy.pause.techpausenotenabled": "Technical pauses are not enabled.",
   "matchzy.pause.notechpauseleft": "{green}{0}{default} has no more tech pauses!",
+  "matchzy.pause.teamcancelledpause": "{green}{0}{default} has cancelled their pause, resuming the match!",
+  "matchzy.pause.onlypausingteamcancancel": "Only {green}{0}{default} can cancel their pause before it ends.",
   "matchzy.pause.ispaused": "Match is already paused!",
   "matchzy.pause.duringhalftime": "You cannot use this command during halftime.",
   "matchzy.pause.matchended": "You cannot use this command after the game has ended.",

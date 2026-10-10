@@ -4,13 +4,12 @@ Most of the commands can also be used using ! prefix instead of . (like !ready)
 - `.ready` Marks the player ready (Alias: `.r`)
 - `.unready` Marks the player unready (Alias: `.ur`, `.notready`)
 - `.forceready` Force-readies the player's team (Only works when using Match setup using JSON/Get5)
-- `.pause` Pauses the match in freezetime (Tactical or normal pause, depends on `matchzy_use_pause_command_for_tactical_pause`).
-- `.tech` Pauses the match in freezetime.
-- `.unpause` Request for unpausing the match. Both teams need to type .unpause to unpause the match
+- `.pause` Starts a tactical timeout of `matchzy_pause_duration` seconds (Alias: `.p`)
+- `.tech` Pauses the match in freezetime with no time limit. Each team can use it `matchzy_max_tech_pauses_allowed` times per map
+- `.unpause` During a `.pause` timeout, the team that called it cancels it right away. During a `.tech` pause, both teams need to type .unpause to unpause the match (Alias: `.up`)
 - `.stay` Stays on the same side (For knife winner, after the knife round)
 - `.switch`/`.swap` Switches the side (For knife winner, after the knife round)
 - `.stop` Restore the backup of the current round (Both teams need to type .stop to restore the current round)
-- `.tac` Starts a tactical timeout
 - `.coach <side>` Starts coaching the specified side. Example: `.coach t` to start coaching terrorist side!
 - `.uncoach` Leaves coaching slot
 

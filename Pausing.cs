@@ -1,70 +1,56 @@
+using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
-using CounterStrikeSharp.API.Modules.Commands;
-using CounterStrikeSharp.API.Modules.Utils;
 
 namespace MatchZy;
 
 public partial class MatchZy
 {
+    // Pausas técnicas (.tech) que usó cada equipo en el mapa actual. Se limpia
+    // en StartLive; el límite es matchzy_max_tech_pauses_allowed.
     public Dictionary<Team, int> technicalPauseUsed = new();
-    public int lastTechPauseDuration = 0;
 
-    public void TechPause(CCSPlayerController? player, CommandInfo? command)
+    // .unpause durante el timeout táctico de .pause: lo cancela antes de que
+    // termine. Solo puede hacerlo el equipo que lo pidió, sin confirmación del rival.
+    private void CancelTacticalPause(CCSPlayerController? player)
     {
-        // Tech Pause is WIP
-        return;
+        if (player == null) return;
 
-#pragma warning disable CS0162 // Unreachable code: se conserva hasta terminar la tech pause
-        if (!isMatchLive) return;
+        var gameRulesProxy = Utilities.FindAllEntitiesByDesignerName<CCSGameRulesProxy>("cs_gamerules").First();
+        var gameRules = gameRulesProxy.GameRules!;
+        if (!gameRules.TerroristTimeOutActive && !gameRules.CTTimeOutActive) return;
 
-        // Treating .tech command as .forcepause if it is used via server console.
-        if (player == null)
+        // El timeout es del lado que lo pidió (timeout_terrorist_start / timeout_ct_start).
+        string pauseSide;
+        if (player.TeamNum == 2 && gameRules.TerroristTimeOutActive)
         {
-            ForcePauseMatch(player, command);
+            pauseSide = "TERRORIST";
+            gameRules.TerroristTimeOutActive = false;
+            gameRules.TerroristTimeOutRemaining = 0;
+        }
+        else if (player.TeamNum == 3 && gameRules.CTTimeOutActive)
+        {
+            pauseSide = "CT";
+            gameRules.CTTimeOutActive = false;
+            gameRules.CTTimeOutRemaining = 0;
+        }
+        else
+        {
+            if (player.TeamNum == 2 || player.TeamNum == 3)
+            {
+                string otherSide = gameRules.TerroristTimeOutActive ? "TERRORIST" : "CT";
+                PrintToPlayerChat(player, Localizer["matchzy.pause.onlypausingteamcancancel", reverseTeamSides[otherSide].teamName]);
+            }
             return;
         }
 
-        if (isPaused)
-        {
-            // ReplyToUserCommand(player, "Match is already paused!");
-            ReplyToUserCommand(player, Localizer["matchzy.pause.ispaused"]);
-            return;
-        }
-        if (IsHalfTimePhase())
-        {
-            // ReplyToUserCommand(player, "You cannot use this command during halftime.");
-            ReplyToUserCommand(player, Localizer["matchzy.pause.duringhalftime"]); ;
-            return;
-        }
-        if (IsPostGamePhase())
-        {
-            // ReplyToUserCommand(player, "You cannot use this command after the game has ended.");
-            ReplyToUserCommand(player, Localizer["matchzy.pause.matchended"]);
-            return;
-        }
-        if (IsTacticalTimeoutActive())
-        {
-            // ReplyToUserCommand(player, "You cannot use this command when tactical timeout is active.");
-            ReplyToUserCommand(player, Localizer["matchzy.pause.tacticaltimeout"]);
-            return;
-        }
+        // Apagar el flag corta el timeout, igual que en RestoreRoundBackup (o
+        // evita que arranque, si se pidió en plena ronda). Pero el timeout retiene
+        // el freezetime con el mismo estado que mp_pause_match —por eso, según
+        // RestoreRoundBackup, al terminar despausa también una pausa de admin—, y
+        // cortado a mano ese estado queda puesto: sin el unpause la ronda no arranca.
+        Utilities.SetStateChanged(gameRulesProxy, "CCSGameRulesProxy", "m_pGameRules");
+        Server.ExecuteCommand("mp_unpause_match;");
 
-        if (player.Team == CsTeam.Spectator || player.Team == CsTeam.None) return;
-
-        if (!techPauseEnabled.Value && player != null)
-        {
-            PrintToPlayerChat(player, Localizer["matchzy.ready.techpausenotenabled"]);
-            return;
-        }
-
-        if (maxTechPausesAllowed.Value <= 0) return;
-
-        Team playerTeam = (player!.Team == CsTeam.CounterTerrorist) ? reverseTeamSides["CT"] : reverseTeamSides["TERRORIST"];
-        if (technicalPauseUsed[playerTeam] >= maxTechPausesAllowed.Value)
-        {
-            PrintToPlayerChat(player, Localizer["matchzy.pause.notechpauseleft", playerTeam.teamName]);
-            return;
-        }
-#pragma warning restore CS0162
+        PrintToAllChat(Localizer["matchzy.pause.teamcancelledpause", reverseTeamSides[pauseSide].teamName]);
     }
 }

@@ -16,7 +16,9 @@ namespace MatchZy
         public FakeConVar<string> techPausePermission  = new("matchzy_tech_pause_flag", "Flag required to use tech pause", "");
         public FakeConVar<int> techPauseDuration  = new("matchzy_tech_pause_duration", "Tech pause duration in seconds. Default value: 300", 300);
 
-        public FakeConVar<int> maxTechPausesAllowed  = new("matchzy_max_tech_pauses_allowed", " Max tech pauses allowed. Default value: 2", 2);
+        public FakeConVar<int> maxTechPausesAllowed  = new("matchzy_max_tech_pauses_allowed", "Max tech pauses (.tech) allowed per team on each map. Default value: 1", 1);
+
+        public FakeConVar<int> pauseDuration = new("matchzy_pause_duration", "Duration in seconds of the tactical timeout started with .pause (sets mp_team_timeout_time). Default value: 60", 60);
 
         public FakeConVar<bool> everyoneIsAdmin = new("matchzy_everyone_is_admin", "If set to true, all the players will have admin privilege. Default: false", false);
 
@@ -180,15 +182,6 @@ namespace MatchZy
             string args = command.ArgString;
 
             isStopCommandAvailable = bool.TryParse(args, out bool isStopCommandAvailableValue) ? isStopCommandAvailableValue : args != "0" && isStopCommandAvailable;
-        }
-
-        [ConsoleCommand("matchzy_use_pause_command_for_tactical_pause", "Whether to use !pause/.pause command for tactical pause or normal pause (unpauses only when both teams use unpause command, for admin force-unpauses the game). Default value: false")]
-        public void MatchZyPauseForTacticalCommand(CCSPlayerController? player, CommandInfo command)
-        {
-            if (player != null) return;
-            string args = command.ArgString;
-
-            isPauseCommandForTactical = bool.TryParse(args, out bool isPauseCommandForTacticalValue) ? isPauseCommandForTacticalValue : args != "0" && isPauseCommandForTactical;
         }
 
         [ConsoleCommand("matchzy_pause_after_restore", "Whether to pause the match after a round is restored using matchzy. Default value: true")]

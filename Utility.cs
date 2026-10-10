@@ -687,6 +687,8 @@ namespace MatchZy
             // los contadores se acumulan entre mapas e inflan los valores
             // persistidos por mapa (KAST llegaba a >100%).
             ResetPerMapStats();
+            // Cada mapa arranca con todas las pausas técnicas disponibles.
+            technicalPauseUsed.Clear();
             SetupLiveFlagsAndCfg();
             Log("[StartLive] SetupLiveFlagsAndCfg OK -> StartDemoRecording");
             StartDemoRecording();
@@ -2237,24 +2239,34 @@ namespace MatchZy
             }
             if (isMatchLive && !isPaused)
             {
+                if (player == null) return;
 
-                string pauseTeamName = "Admin";
-                unpauseData["pauseTeam"] = "Admin";
-                if (player?.TeamNum == 2)
+                Team pauseTeam;
+                if (player.TeamNum == 2)
                 {
-
-                    pauseTeamName = reverseTeamSides["TERRORIST"].teamName;
-                    unpauseData["pauseTeam"] = reverseTeamSides["TERRORIST"].teamName;
+                    pauseTeam = reverseTeamSides["TERRORIST"];
                 }
-                else if (player?.TeamNum == 3)
+                else if (player.TeamNum == 3)
                 {
-                    pauseTeamName = reverseTeamSides["CT"].teamName;
-                    unpauseData["pauseTeam"] = reverseTeamSides["CT"].teamName;
+                    pauseTeam = reverseTeamSides["CT"];
                 }
                 else
                 {
                     return;
                 }
+
+                // La pausa técnica no tiene límite de tiempo, pero cada equipo
+                // tiene matchzy_max_tech_pauses_allowed por mapa.
+                technicalPauseUsed.TryGetValue(pauseTeam, out int pausesUsed);
+                if (pausesUsed >= maxTechPausesAllowed.Value)
+                {
+                    PrintToPlayerChat(player, Localizer["matchzy.pause.notechpauseleft", pauseTeam.teamName]);
+                    return;
+                }
+                technicalPauseUsed[pauseTeam] = pausesUsed + 1;
+
+                string pauseTeamName = pauseTeam.teamName;
+                unpauseData["pauseTeam"] = pauseTeamName;
                 PrintToAllChat(Localizer["matchzy.pause.pausedthematch", pauseTeamName]);
                 // Server.PrintToChatAll($"{chatPrefix} {ChatColors.Green}{pauseTeamName}{ChatColors.Default} has paused the match. Type .unpause to unpause the match");
 
@@ -2455,7 +2467,7 @@ namespace MatchZy
             if (matchStarted)
             {
                 string stopCommandMessage = isStopCommandAvailable ? ", .stop" : "";
-                player!.PrintToChat($" {ChatColors.Green}Pause/Restore: {ChatColors.Default}.pause, .unpause, .tac, .tech{stopCommandMessage}");
+                player!.PrintToChat($" {ChatColors.Green}Pause/Restore: {ChatColors.Default}.pause, .unpause, .tech{stopCommandMessage}");
                 return;
             }
         }

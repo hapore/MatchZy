@@ -99,8 +99,8 @@ Example: `matchzy_demo_upload_url "https://your-website.com/upload-endpoint"` <b
 ####`matchzy_reset_cvars_on_series_end`
 :   Whether parameters from the cvars section of a match configuration are restored to their original values when a series ends.<br>**`Default: true`**
 
-####`matchzy_use_pause_command_for_tactical_pause`
-:   Whether to use !pause/.pause command for tactical pause or normal pause (unpauses only when both teams use unpause command, for admin force-unpauses the game).<br>**`Default: false`**
+####`matchzy_pause_duration`
+:   Duration in seconds of the tactical timeout started with !pause/.pause (sets `mp_team_timeout_time`). The team that called it can cancel it earlier with !unpause/.unpause.<br>**`Default: 60`**
 
 ####`matchzy_autostart_mode`
 :   Whether the plugin will load the match mode, the practice moder or neither by startup. 0 for neither, 1 for match mode, 2 for practice mode.<br>**`Default: 1`**
