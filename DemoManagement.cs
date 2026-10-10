@@ -41,7 +41,7 @@ namespace MatchZy
             string demoFileName = SanitizeDemoFileName(FormatCvarValue(demoNameFormat.Replace(" ", "_"))) + ".dem";
             try
             {
-                string? directoryPath = Path.GetDirectoryName(Path.Join(Server.GameDirectory + "/csgo/", demoPath));
+                string? directoryPath = Path.GetDirectoryName(GetDemoAbsolutePath(demoPath));
                 if (directoryPath != null)
                 {
                     if (!Directory.Exists(directoryPath))
@@ -52,17 +52,48 @@ namespace MatchZy
                 string tempDemoPath = demoPath == "" ? demoFileName : demoPath + demoFileName;
                 activeDemoFile = tempDemoPath;
                 Log($"[StartDemoRecoding] Starting demo recording, path: {tempDemoPath}");
-                Server.ExecuteCommand($"tv_record {tempDemoPath}");
-                isDemoRecording = true;
+                RecordDemo(tempDemoPath);
             }
             catch (Exception ex)
             {
                 Log($"[StartDemoRecording - FATAL] Error: {ex.Message}. Starting demo recording with path. Name: {demoFileName}");
                 // This is to avoid demo loss in any case of exception
-                Server.ExecuteCommand($"tv_record {demoFileName}");
-                isDemoRecording = true;
+                activeDemoFile = demoFileName;
+                RecordDemo(demoFileName);
             }
 
+        }
+
+        // Ruta absoluta en disco de un archivo relativo a csgo/ (activeDemoFile, demoPath).
+        private static string GetDemoAbsolutePath(string relativePath)
+        {
+            return Path.Join(Server.GameDirectory, "csgo", relativePath);
+        }
+
+        // tv_record recibe SIEMPRE la ruta absoluta. Desde el update de CS2 del
+        // 2026-09-22 una ruta relativa se resuelve contra el primer search path
+        // del juego, que con Metamod instalado es csgo/addons/metamod/. Ahí no
+        // existe MatchZy/, así que tv_record fallaba con "CDemoFile::Open:
+        // couldn't open file ... for writing" mientras el plugin daba la demo
+        // por grabando, y el fallo recién aparecía como "File not found" al
+        // intentar subirla al final del mapa.
+        private void RecordDemo(string relativeDemoFile)
+        {
+            string absoluteDemoFile = GetDemoAbsolutePath(relativeDemoFile);
+            Server.ExecuteCommand($"tv_record \"{absoluteDemoFile}\"");
+            isDemoRecording = true;
+
+            // tv_record no reporta errores al plugin: verificamos que el motor
+            // haya creado el archivo para que el fallo se vea al arrancar el mapa.
+            AddTimer(5, () =>
+            {
+                // Si la grabación ya se paró o se reemplazó por otra, no es nuestra.
+                if (!isDemoRecording || activeDemoFile != relativeDemoFile) return;
+                if (File.Exists(absoluteDemoFile)) return;
+
+                Log($"[StartDemoRecording ERROR] tv_record no creó la demo: {absoluteDemoFile}. Revisar la consola del server (CDemoFile::Open) y que tv_enable esté en 1.");
+                isDemoRecording = false;
+            });
         }
 
         /// <summary>
@@ -95,7 +126,7 @@ namespace MatchZy
         public void StopDemoRecording(float delay, string activeDemoFile, long liveMatchId, int currentMapNumber)
         {
             Log($"[StopDemoRecording] Going to stop demorecording in {delay}s");
-            string demoPath = Path.Join(Server.GameDirectory + "/csgo/", activeDemoFile);
+            string demoPath = GetDemoAbsolutePath(activeDemoFile);
             (int t1score, int t2score) = GetTeamsScore();
             int roundNumber = t1score + t2score;
             AddTimer(delay, () =>
