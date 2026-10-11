@@ -1,4 +1,10 @@
 {
+  "matchzy.match.playerwaitpaused": "{green}Admin{default} 已暫停玩家等待倒數（剩餘 {green}{0}{default}）。使用 {green}.tup{default} 繼續。",
+  "matchzy.match.playerwaitresumed": "{green}Admin{default} 已恢復玩家等待倒數：距離所有玩家連線還剩 {green}{0}{default}。",
+  "matchzy.match.playerwaitstillpaused": "玩家等待倒數仍處於暫停狀態（剩餘 {green}{0}{default}）。",
+  "matchzy.match.playerwaitnotactive": "目前沒有正在進行的玩家等待倒數。",
+  "matchzy.match.playerwaitalreadypaused": "玩家等待倒數已經暫停。",
+  "matchzy.match.playerwaitnotpaused": "玩家等待倒數未暫停。",
   "matchzy.ready.markedready": "您已被標記為準備完成。",
   "matchzy.ready.markedunready": "您已經被標記為未準備。",
   "matchzy.ready.readytotestorebackupinfomessage": "Unready players: {0}. Please type .ready when you are ready to restore the match backup. {1}",

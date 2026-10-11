@@ -1,4 +1,10 @@
 {
+  "matchzy.match.playerwaitpaused": "{green}Admin{default}がプレイヤー待機のカウントダウンを一時停止しました（残り{green}{0}{default}）。{green}.tup{default}で再開します。",
+  "matchzy.match.playerwaitresumed": "{green}Admin{default}がプレイヤー待機のカウントダウンを再開しました：全員の接続まで残り{green}{0}{default}。",
+  "matchzy.match.playerwaitstillpaused": "プレイヤー待機のカウントダウンは一時停止中です（残り{green}{0}{default}）。",
+  "matchzy.match.playerwaitnotactive": "進行中のプレイヤー待機カウントダウンはありません。",
+  "matchzy.match.playerwaitalreadypaused": "プレイヤー待機のカウントダウンはすでに一時停止中です。",
+  "matchzy.match.playerwaitnotpaused": "プレイヤー待機のカウントダウンは一時停止されていません。",
   "matchzy.ready.markedready": "準備完了としてマークされました。",
   "matchzy.ready.markedunready": "準備ができていないとマークされています。",
   "matchzy.ready.readytotestorebackupinfomessage": "Unready players: {0}. Please type .ready when you are ready to restore the match backup. {1}",

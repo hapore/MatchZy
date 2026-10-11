@@ -6,8 +6,9 @@ namespace MatchZy;
 public partial class MatchZy
 {
     // Pausas técnicas (.tech) que usó cada equipo en el mapa actual. Se limpia
-    // en StartLive; el límite es matchzy_max_tech_pauses_allowed. Las del
-    // cuchillo no descuentan del cupo del mapa: StartLive las vuelve a cero.
+    // al empezar el cuchillo, en StartLive y en ResetMatch; el límite es
+    // matchzy_max_tech_pauses_allowed. Las del cuchillo no descuentan del cupo
+    // del mapa: StartLive las vuelve a cero.
     public Dictionary<Team, int> technicalPauseUsed = new();
 
     /// <summary>

@@ -174,6 +174,23 @@ namespace MatchZy
         /// </summary>
         public int playerWaitGeneration = 0;
 
+        /// <summary>
+        /// Contador de espera de jugadores pausado con .timerpause (solo
+        /// admins), sin límite de tiempo. En pausa no corren ni el timeout que
+        /// cancela la partida ni el recordatorio; .timerunpause lo rearma con
+        /// los segundos que quedaban.
+        /// </summary>
+        public bool isPlayerWaitPaused = false;
+        private int playerWaitRemainingAtPause = 0;
+
+        /// <summary>Instante en que vence el contador armado (para saber cuánto queda al pausar).</summary>
+        private DateTime playerWaitDeadlineUtc = DateTime.MinValue;
+
+        // Datos del contador en curso, para rearmarlo al reanudar.
+        private int playerWaitTotalTimeout = 0;
+        private int playerWaitMapNumber = 0;
+        private long playerWaitMatchId = -1;
+
         // Game Config
         public bool isKnifeRequired = true;
         public int minimumReadyRequired = 2; // Number of ready players required start the match. If set to 0, all connected players have to ready-up to start the match.
@@ -260,6 +277,10 @@ namespace MatchZy
                 { ".fp", OnForcePauseCommand },
                 { ".forceunpause", OnForceUnpauseCommand },
                 { ".fup", OnForceUnpauseCommand },
+                { ".timerpause", OnTimerPauseCommand },
+                { ".tp", OnTimerPauseCommand },
+                { ".timerunpause", OnTimerUnpauseCommand },
+                { ".tup", OnTimerUnpauseCommand },
                 { ".roundknife", OnKnifeCommand },
                 { ".rk", OnKnifeCommand },
                 { ".playout", OnPlayoutCommand },

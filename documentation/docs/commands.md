@@ -67,6 +67,8 @@ Most of the commands can also be used using ! prefix instead of . (like !ready)
 - `.restart` Force restarts/resets a match. (Alias: `.endmatch`, `.forceend`)
 - `.forcepause` Pauses the match as an admin (Players cannot unpause the admin-paused match). Works from any team, including spectators, once the match has started (knife round included). (Alias: `.fp`)
 - `.forceunpause` Force unpauses the match. Also cancels a pause that is still pending for the first live round. (Alias: `.fup`)
+- `.timerpause` Pauses, with no time limit, the warmup countdown that cancels the match if not all players connect before each map. (Alias: `.tp`, console: `css_timerpause`)
+- `.timerunpause` Resumes that countdown with the time it had left. (Alias: `.tup`, console: `css_timerunpause`)
 - `.restore <round>` Restores the backup of provided round number.
 - `.skipveto` / `.sv` Skips the current veto phase.
 - `.roundknife` / `.rk` Toggles the knife round. If disabled, match will directly go from Warmup phase to Live phase.

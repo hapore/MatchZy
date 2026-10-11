@@ -229,11 +229,19 @@ namespace MatchZy
                 return;
             }
 
-            Log($"[.pause command sent via chat] Sent by: {player.UserId}, connectedPlayers: {connectedPlayers}, knife: {isKnifeRound}");
+            Log($"[.pause command sent via chat] Sent by: {player.UserId}, team: {player.TeamNum}, knife: {isKnifeRound}, live: {isMatchLive}, paused: {isPaused}");
             if (isPaused)
             {
                 // ReplyToUserCommand(player, "Match is already paused, cannot start a tactical timeout!");
                 ReplyToUserCommand(player, Localizer["matchzy.cc.matchpaused"]);
+                return;
+            }
+            // Igual que .tech: entre la última ronda y cs_win_panel_match la
+            // partida sigue marcada en vivo, y un timeout ahí se pedía con la
+            // partida ya terminada.
+            if (IsPostGamePhase())
+            {
+                ReplyToUserCommand(player, Localizer["matchzy.pause.matchended"]);
                 return;
             }
             var gameRules = Utilities.FindAllEntitiesByDesignerName<CCSGameRulesProxy>("cs_gamerules").First().GameRules!;
@@ -280,6 +288,48 @@ namespace MatchZy
         public void OnForceUnpauseCommand(CCSPlayerController? player, CommandInfo? command)
         {
             ForceUnpauseMatch(player, command);
+        }
+
+        // .timerpause / .tp: pausa sin límite de tiempo el contador del warmup
+        // que cancela la partida si no se conectan todos. Solo admins: en manos
+        // de un jugador alcanzaría para trabar la partida indefinidamente.
+        // No se registra css_tp: `!tp` es el teleport de otros plugins de admin.
+        [ConsoleCommand("css_timerpause", "Pauses the warmup player wait countdown (admin)")]
+        public void OnTimerPauseCommand(CCSPlayerController? player, CommandInfo? command)
+        {
+            if (!IsPlayerAdmin(player, "css_timerpause", "@css/config"))
+            {
+                SendPlayerNotAdminMessage(player);
+                return;
+            }
+            if (!isWaitingForPlayers || matchStarted)
+            {
+                ReplyToUserCommand(player, Localizer["matchzy.match.playerwaitnotactive"]);
+                return;
+            }
+            if (isPlayerWaitPaused)
+            {
+                ReplyToUserCommand(player, Localizer["matchzy.match.playerwaitalreadypaused"]);
+                return;
+            }
+            PausePlayerWait(player);
+        }
+
+        // .timerunpause / .tup: reanuda el contador con el tiempo que le quedaba.
+        [ConsoleCommand("css_timerunpause", "Resumes the warmup player wait countdown (admin)")]
+        public void OnTimerUnpauseCommand(CCSPlayerController? player, CommandInfo? command)
+        {
+            if (!IsPlayerAdmin(player, "css_timerunpause", "@css/config"))
+            {
+                SendPlayerNotAdminMessage(player);
+                return;
+            }
+            if (!isPlayerWaitPaused || !isWaitingForPlayers || matchStarted)
+            {
+                ReplyToUserCommand(player, Localizer["matchzy.match.playerwaitnotpaused"]);
+                return;
+            }
+            ResumePlayerWait(player);
         }
 
         [ConsoleCommand("css_unpause", "Unpause the match")]

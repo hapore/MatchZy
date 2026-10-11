@@ -1,4 +1,10 @@
 {
+  "matchzy.match.playerwaitpaused": "{green}Admin{default} szüneteltette a játékosokra várakozás visszaszámlálását (hátralévő idő: {green}{0}{default}). Folytatás: {green}.tup{default}.",
+  "matchzy.match.playerwaitresumed": "{green}Admin{default} folytatta a játékosokra várakozás visszaszámlálását: {green}{0}{default} van hátra, hogy minden játékos csatlakozzon.",
+  "matchzy.match.playerwaitstillpaused": "A játékosokra várakozás visszaszámlálása továbbra is szünetel (hátralévő idő: {green}{0}{default}).",
+  "matchzy.match.playerwaitnotactive": "Nincs folyamatban játékosokra várakozás visszaszámlálása.",
+  "matchzy.match.playerwaitalreadypaused": "A játékosokra várakozás visszaszámlálása már szünetel.",
+  "matchzy.match.playerwaitnotpaused": "A játékosokra várakozás visszaszámlálása nem szünetel.",
   "matchzy.ready.markedready": "Készen állsz.",
   "matchzy.ready.markedunready": "Nem állsz készen.",
   "matchzy.ready.readytotestorebackupinfomessage": "Unready players: {0}. Please type .ready when you are ready to restore the match backup. {1}",

@@ -349,12 +349,30 @@ namespace MatchZy
             matchCountdownTimer = null;
 
             isWaitingForPlayers = true;
-            int waitTimeout = matchConfig.PlayerWaitTimeout;
-            int mapNumber = matchConfig.CurrentMapNumber;
-            long capturedMatchId = liveMatchId;
-            DateTime waitStartedAt = DateTime.UtcNow;
+            // Un contador nuevo (mapa nuevo) arranca corriendo aunque el del
+            // mapa anterior hubiera quedado en pausa.
+            isPlayerWaitPaused = false;
+            playerWaitTotalTimeout = matchConfig.PlayerWaitTimeout;
+            playerWaitMapNumber = matchConfig.CurrentMapNumber;
+            playerWaitMatchId = liveMatchId;
 
-            Log($"[StartPlayerWaitSystem] Map {mapNumber}: waiting up to {waitTimeout}s for {expectedCount} player(s).");
+            Log($"[StartPlayerWaitSystem] Map {playerWaitMapNumber}: waiting up to {playerWaitTotalTimeout}s for {expectedCount} player(s).");
+
+            ArmPlayerWaitTimers(playerWaitTotalTimeout);
+        }
+
+        /// <summary>
+        /// Arma el timeout que cancela la partida y el recordatorio en chat con
+        /// <paramref name="seconds"/> por delante. Lo usan el arranque del
+        /// contador y .timerunpause, que lo rearma con lo que quedaba.
+        /// </summary>
+        private void ArmPlayerWaitTimers(int seconds)
+        {
+            int waitTimeout = playerWaitTotalTimeout;
+            int mapNumber = playerWaitMapNumber;
+            long capturedMatchId = playerWaitMatchId;
+            DateTime armedAt = DateTime.UtcNow;
+            playerWaitDeadlineUtc = armedAt.AddSeconds(seconds);
 
             // Recordatorio periódico en chat. Antes vivía en el backend
             // (`matchPlayerCheck.ts`) usando RCON, ahora es nativo del plugin
@@ -369,14 +387,21 @@ namespace MatchZy
             // nos provocó SIGSEGV del engine en runs previos.
             int secondsThreshold = playerWaitSecondsThresholdCvar.Value > 0 ? playerWaitSecondsThresholdCvar.Value : 30;
             int waitId = ++playerWaitGeneration;
-            ScheduleWaitReminderTick(waitId, waitTimeout, secondsThreshold, waitStartedAt, lastPrintedSec: -1);
+            ScheduleWaitReminderTick(waitId, seconds, secondsThreshold, armedAt, lastPrintedSec: -1);
             playerWaitReminderTimer = null; // ya no usamos un timer único
 
-            playerWaitTimeoutTimer = AddTimer(waitTimeout, () =>
+            playerWaitTimeoutTimer = AddTimer(seconds, () =>
             {
                 // One-shot: ya disparó. Un Kill() posterior sobre este puntero
                 // podría matar otro timer que reutilice la dirección.
                 playerWaitTimeoutTimer = null;
+                // .timerpause mata este timer; si igual llegara a disparar con
+                // el contador en pausa, no cancela la partida.
+                if (isPlayerWaitPaused)
+                {
+                    Log($"[PlayerWaitTimeout] Map {mapNumber}: el contador está en pausa, no se cancela la partida.");
+                    return;
+                }
                 if (!matchStarted && isWaitingForPlayers)
                 {
                     Log($"[PlayerWaitTimeout] Map {mapNumber}: {waitTimeout}s reached. Not all players connected. Cancelling match.");
@@ -458,6 +483,57 @@ namespace MatchZy
             });
         }
 
+        /// <summary>Cada cuánto se recuerda en chat que el contador de espera sigue en pausa.</summary>
+        private const float PlayerWaitPausedReminderSeconds = 60f;
+
+        /// <summary>
+        /// .timerpause: congela el contador de espera sin límite de tiempo.
+        /// Guarda lo que quedaba, mata el timeout que cancela la partida y corta
+        /// el recordatorio (cambiando la generación, como el resto de los ticks).
+        /// </summary>
+        private void PausePlayerWait(CCSPlayerController? admin)
+        {
+            int remaining = Math.Max(1, (int)Math.Ceiling((playerWaitDeadlineUtc - DateTime.UtcNow).TotalSeconds));
+
+            // Todavía no disparó (al disparar se pone en null), así que el Kill es seguro.
+            playerWaitTimeoutTimer?.Kill();
+            playerWaitTimeoutTimer = null;
+            int pausedId = ++playerWaitGeneration;
+
+            isPlayerWaitPaused = true;
+            playerWaitRemainingAtPause = remaining;
+
+            PrintToAllChat(Localizer["matchzy.match.playerwaitpaused", FormatWaitTime(remaining)]);
+            LogInfo("PlayerWait", $"Contador de espera pausado por {(admin == null ? "consola" : admin.PlayerName)} con {remaining} s restantes (mapa {playerWaitMapNumber}).");
+            SchedulePlayerWaitPausedReminder(pausedId);
+        }
+
+        /// <summary>.timerunpause: rearma el contador con los segundos que quedaban al pausarlo.</summary>
+        private void ResumePlayerWait(CCSPlayerController? admin)
+        {
+            int remaining = playerWaitRemainingAtPause;
+            isPlayerWaitPaused = false;
+            // Cambia la generación: corta también el recordatorio de pausa.
+            ArmPlayerWaitTimers(remaining);
+
+            PrintToAllChat(Localizer["matchzy.match.playerwaitresumed", FormatWaitTime(remaining)]);
+            LogInfo("PlayerWait", $"Contador de espera reanudado por {(admin == null ? "consola" : admin.PlayerName)} con {remaining} s restantes (mapa {playerWaitMapNumber}).");
+        }
+
+        private void SchedulePlayerWaitPausedReminder(int pausedId)
+        {
+            AddTimer(PlayerWaitPausedReminderSeconds, () =>
+            {
+                if (pausedId != playerWaitGeneration || !isPlayerWaitPaused) return;
+                if (!isWaitingForPlayers || matchStarted) return;
+                PrintToAllChat(Localizer["matchzy.match.playerwaitstillpaused", FormatWaitTime(playerWaitRemainingAtPause)]);
+                SchedulePlayerWaitPausedReminder(pausedId);
+            });
+        }
+
+        /// <summary>Segundos como m:ss para los mensajes del contador.</summary>
+        private static string FormatWaitTime(int seconds) => $"{seconds / 60}:{seconds % 60:D2}";
+
         /// <summary>
         /// Devuelve los SteamIDs declarados en el match config (team1+team2)
         /// que aún no están conectados al servidor. Usado para reportar quién
@@ -512,6 +588,10 @@ namespace MatchZy
             isKnifeRound = true;
             readyAvailable = false;
             isWarmup = false;
+            // El cuchillo arranca con las pausas técnicas disponibles. Si no, el
+            // contador traía lo usado en el mapa anterior (o en la partida
+            // anterior) y un `.tech` en el cuchillo respondía que no quedaban.
+            technicalPauseUsed.Clear();
             // Se terminó el warmup inicial: a partir de acá no se reaplica más.
             warmupCfgReapplyEnabled = false;
 
@@ -771,8 +851,10 @@ namespace MatchZy
             // Cancela cualquier tick one-shot del countdown que esté en cola.
             countdownGeneration++;
             isCountdownActive = false;
-            // Cancela cualquier tick one-shot del wait reminder que esté en cola.
+            // Cancela cualquier tick one-shot del wait reminder que esté en cola
+            // (también el recordatorio de pausa del contador).
             playerWaitGeneration++;
+            isPlayerWaitPaused = false;
             // Idem para la seleccion de lado y el recordatorio de abandono.
             sideSelectionGeneration++;
             abandonWarnGeneration++;
@@ -840,6 +922,7 @@ namespace MatchZy
 
                 // Reset player-wait / countdown state
                 isWaitingForPlayers = false;
+                isPlayerWaitPaused = false;
                 playerWaitTimeoutTimer?.Kill();
                 playerWaitTimeoutTimer = null;
                 playerWaitReminderTimer?.Kill();
@@ -884,6 +967,9 @@ namespace MatchZy
                 nadeSpecificLastGrenadeData = new();
                 UnpauseMatch();
                 pauseCarriedToLive = null;
+                // matchzyTeam1/2 son los mismos objetos de una partida a otra: sin
+                // esto, lo usado en la partida anterior seguía contando.
+                technicalPauseUsed.Clear();
 
                 matchzyTeam1.teamName = "COUNTER-TERRORISTS";
                 matchzyTeam2.teamName = "TERRORISTS";
@@ -1249,6 +1335,8 @@ namespace MatchZy
                     // Se invalida la generación para que cualquier tick del reminder
                     // que ya esté en cola se descarte silenciosamente.
                     isWaitingForPlayers = false;
+                    // Si un admin lo había pausado, al llegar todos ya no aplica.
+                    isPlayerWaitPaused = false;
                     playerWaitGeneration++;
                     playerWaitTimeoutTimer?.Kill();
                     playerWaitTimeoutTimer = null;
@@ -1324,6 +1412,7 @@ namespace MatchZy
                     countdownGeneration++;
                     isCountdownActive = false;
                     isWaitingForPlayers = false;
+                    isPlayerWaitPaused = false;
                     PrintToAllChat(Localizer["matchzy.match.started"]);
 
                     // Diferir HandleMatchStart: dejarle al engine un frame
@@ -1996,6 +2085,7 @@ namespace MatchZy
                 isPractice = false;
                 isDryRun = false;
                 isWaitingForPlayers = false;
+                isPlayerWaitPaused = false;
 
                 SetMapSides();
 
@@ -2266,6 +2356,7 @@ namespace MatchZy
 
         private void PauseMatch(CCSPlayerController? player, CommandInfo? command)
         {
+            Log($"[.tech command] Sent by: {player?.UserId}, team: {player?.TeamNum}, knife: {isKnifeRound}, live: {isMatchLive}, paused: {isPaused}");
             // .tech vale en vivo y en la ronda de cuchillo. Antes, fuera de vivo
             // no hacía nada y no avisaba.
             if (!matchStarted || !IsPausablePhase)

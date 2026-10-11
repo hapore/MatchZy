@@ -1,4 +1,10 @@
 {
+    "matchzy.match.playerwaitpaused": "{green}Admin{default} поставил на паузу отсчёт ожидания игроков (осталось {green}{0}{default}). Продолжить: {green}.tup{default}.",
+    "matchzy.match.playerwaitresumed": "{green}Admin{default} возобновил отсчёт ожидания игроков: осталось {green}{0}{default}, чтобы все игроки подключились.",
+    "matchzy.match.playerwaitstillpaused": "Отсчёт ожидания игроков всё ещё на паузе (осталось {green}{0}{default}).",
+    "matchzy.match.playerwaitnotactive": "Отсчёт ожидания игроков сейчас не идёт.",
+    "matchzy.match.playerwaitalreadypaused": "Отсчёт ожидания игроков уже на паузе.",
+    "matchzy.match.playerwaitnotpaused": "Отсчёт ожидания игроков не на паузе.",
     "matchzy.ready.markedready": "Вас отметили как готового.",
     "matchzy.ready.markedunready": "Вас отметили как НЕ готового.",
     "matchzy.ready.readytotestorebackupinfomessage": "Unready players: {0}. Please type .ready when you are ready to restore the match backup. {1}",

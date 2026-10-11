@@ -1,4 +1,10 @@
 {
+    "matchzy.match.playerwaitpaused": "{green}Admin{default} hat den Countdown der Spielerwartezeit pausiert (noch {green}{0}{default}). Mit {green}.tup{default} geht es weiter.",
+    "matchzy.match.playerwaitresumed": "{green}Admin{default} hat den Countdown der Spielerwartezeit fortgesetzt: noch {green}{0}{default}, bis alle Spieler verbunden sein müssen.",
+    "matchzy.match.playerwaitstillpaused": "Der Countdown der Spielerwartezeit ist weiterhin pausiert (noch {green}{0}{default}).",
+    "matchzy.match.playerwaitnotactive": "Es läuft kein Countdown der Spielerwartezeit.",
+    "matchzy.match.playerwaitalreadypaused": "Der Countdown der Spielerwartezeit ist bereits pausiert.",
+    "matchzy.match.playerwaitnotpaused": "Der Countdown der Spielerwartezeit ist nicht pausiert.",
     "matchzy.ready.markedready": "Du bist bereit.",
     "matchzy.ready.markedunready": "Du bist nicht mehr bereit.",
     "matchzy.ready.readytotestorebackupinfomessage": "Unready players: {0}. Please type .ready when you are ready to restore the match backup. {1}",

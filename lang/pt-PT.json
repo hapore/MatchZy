@@ -1,4 +1,10 @@
 {
+  "matchzy.match.playerwaitpaused": "{green}Admin{default} colocou em pausa a contagem de espera dos jogadores (faltam {green}{0}{default}). Retoma com {green}.tup{default}.",
+  "matchzy.match.playerwaitresumed": "{green}Admin{default} retomou a contagem de espera dos jogadores: faltam {green}{0}{default} para todos se ligarem.",
+  "matchzy.match.playerwaitstillpaused": "A contagem de espera dos jogadores continua em pausa (faltam {green}{0}{default}).",
+  "matchzy.match.playerwaitnotactive": "Não existe nenhuma contagem de espera de jogadores a decorrer.",
+  "matchzy.match.playerwaitalreadypaused": "A contagem de espera dos jogadores já está em pausa.",
+  "matchzy.match.playerwaitnotpaused": "A contagem de espera dos jogadores não está em pausa.",
   "matchzy.ready.markedready": "Foi marcado como Pronto.",
   "matchzy.ready.markedunready": "Foi marcado como NÃO pronto",
   "matchzy.ready.readytotestorebackupinfomessage": "Jogadores que não estão prontos: {0}. Por favor, escreve .ready quando estiveres pronto para restaurar o backup da partida. {1}",

@@ -1,4 +1,10 @@
 {
+  "matchzy.match.playerwaitpaused": "{green}Admin{default} oʻyinchilarni kutish taymerini pauza qildi (qoldi: {green}{0}{default}). Davom ettirish uchun {green}.tup{default}.",
+  "matchzy.match.playerwaitresumed": "{green}Admin{default} oʻyinchilarni kutish taymerini davom ettirdi: barcha oʻyinchilar ulanishi uchun {green}{0}{default} qoldi.",
+  "matchzy.match.playerwaitstillpaused": "Oʻyinchilarni kutish taymeri hali ham pauzada (qoldi: {green}{0}{default}).",
+  "matchzy.match.playerwaitnotactive": "Hozir oʻyinchilarni kutish taymeri ishlamayapti.",
+  "matchzy.match.playerwaitalreadypaused": "Oʻyinchilarni kutish taymeri allaqachon pauzada.",
+  "matchzy.match.playerwaitnotpaused": "Oʻyinchilarni kutish taymeri pauzada emas.",
   "matchzy.ready.markedready": "Siz tayyor deb belgilandingiz.",
   "matchzy.ready.markedunready": "Siz tayyor emas deb belgilandingiz.",
   "matchzy.ready.readytotestorebackupinfomessage": "Tayyormas oʻyinchilar: {0}. Oʻyinning zaxira nusxasini tiklashga tayyor boʻlganingizda .ready yozing. {1}",

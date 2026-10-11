@@ -1,4 +1,10 @@
 {
+    "matchzy.match.playerwaitpaused": "{green}Admin{default} a mis en pause le compte à rebours d'attente des joueurs ({green}{0}{default} restant). Reprenez-le avec {green}.tup{default}.",
+    "matchzy.match.playerwaitresumed": "{green}Admin{default} a relancé le compte à rebours d'attente des joueurs : il reste {green}{0}{default} pour que tous les joueurs se connectent.",
+    "matchzy.match.playerwaitstillpaused": "Le compte à rebours d'attente des joueurs est toujours en pause ({green}{0}{default} restant).",
+    "matchzy.match.playerwaitnotactive": "Aucun compte à rebours d'attente des joueurs n'est en cours.",
+    "matchzy.match.playerwaitalreadypaused": "Le compte à rebours d'attente des joueurs est déjà en pause.",
+    "matchzy.match.playerwaitnotpaused": "Le compte à rebours d'attente des joueurs n'est pas en pause.",
     "matchzy.ready.markedready": "Vous avez été marqué comme prêt.",
     "matchzy.ready.markedunready": "Vous avez été marqué comme NON prêt.",
     "matchzy.ready.readytotestorebackupinfomessage": "Unready players: {0}. Please type .ready when you are ready to restore the match backup. {1}",
