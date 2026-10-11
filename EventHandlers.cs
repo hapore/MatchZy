@@ -42,8 +42,22 @@ public partial class MatchZy
             if (!IsPlayerValid(player)) return HookResult.Continue;
             Log($"[FULL CONNECT] Player ID: {player!.UserId}, Name: {player.PlayerName} has connected!");
 
+            // Bots y GOTV no son jugadores de la partida (UpdatePlayersMap
+            // también los deja afuera de playerData). Antes la condición de
+            // abajo (`!IsBot || !IsHLTV`) era siempre verdadera y un bot en
+            // modo partida terminaba con un kickid — justo mientras el motor
+            // agrega los bots de la carga de nivel. warmup.cfg ya los saca.
+            if (player.IsBot || player.IsHLTV)
+            {
+                if (IsMapTransitionActive || IsInReconnectWindow)
+                {
+                    LogInfo("MapChange", $"Bot '{player.PlayerName}' conectado durante la carga del nivel; MatchZy no lo toca.");
+                }
+                return HookResult.Continue;
+            }
+
             // Handling whitelisted players
-            if (!player.IsBot || !player.IsHLTV)
+            if (!player.IsBot && !player.IsHLTV)
             {
                 var steamId = player.SteamID;
 
@@ -70,6 +84,10 @@ public partial class MatchZy
             {
                 playerData[player.UserId.Value] = player;
                 connectedPlayers++;
+
+                // Coach que venía del nivel anterior (los controllers no
+                // sobreviven al changelevel; se reasocia por SteamID).
+                RestoreCarriedOverCoach(player);
 
                 // Servidor saliendo de vacío: hay que reaplicar el CFG de warmup
                 // (el porqué está en HandleFirstPlayerConnected). Se cuentan los

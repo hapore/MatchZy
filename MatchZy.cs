@@ -227,6 +227,8 @@ namespace MatchZy
             reverseTeamSides["CT"] = matchzyTeam1;
             reverseTeamSides["TERRORIST"] = matchzyTeam2;
 
+            CheckLevelLoadBotQuotaConfig();
+
             if (!hotReload)
             {
                 AutoStart();
@@ -381,7 +383,7 @@ namespace MatchZy
 
                 CsTeam playerTeam = GetPlayerTeam(player);
 
-                SwitchPlayerTeam(player, playerTeam);
+                SwitchPlayerTeam(player, playerTeam, (CsTeam)@event.Team);
 
                 // Re-evaluar el auto-start: cuando un jugador acaba de ser
                 // movido a su equipo de la config, IsTeamReady() recién ahora
@@ -467,49 +469,18 @@ namespace MatchZy
 
             RegisterListener<Listeners.OnMapStart>(mapName =>
             {
-                AddTimer(1.0f, () =>
-                {
-                    if (!isMatchSetup)
-                    {
-                        AutoStart();
-                        return;
-                    }
-                    if (isWarmup) StartWarmup();
-                    if (isPractice) StartPracticeMode();
-
-                    // Notifica a servicios externos que el warmup del mapa actual
-                    // ya está activo (post `changelevel` + cfg de warmup). Permite
-                    // a integraciones evitar timers/race conditions tipo "esperar X
-                    // segundos antes de chequear jugadores en BO3".
-                    if (isMatchSetup && isWarmup && liveMatchId > 0)
-                    {
-                        var warmupStartedEvent = new MapWarmupStartedEvent
-                        {
-                            MatchId = liveMatchId,
-                            MapNumber = matchConfig.CurrentMapNumber
-                        };
-                        Task.Run(async () => await SendEventAsync(warmupStartedEvent));
-
-                        // Reinicia el watchdog de espera de jugadores SOLO para
-                        // los mapas posteriores de una serie BO3/BO5
-                        // (CurrentMapNumber > 0). El primer mapa ya lo arranca
-                        // `LoadMatchFromJSON` y volver a llamarlo aquí provocaba
-                        // doble inicialización + doble exec de warmup.cfg al
-                        // mismo tiempo que la primera ronda de jugadores
-                        // conectaba, lo que llegaba a hacer crashear al server
-                        // CS2 (segfault en spawn points).
-                        if (!matchStarted && matchConfig.CurrentMapNumber > 0)
-                        {
-                            StartPlayerWaitSystem();
-                        }
-                    }
-                });
+                // Inmediato: descarta el estado del nivel anterior antes de que
+                // reconecte nadie. Lo que antes hacía este timer (warmup,
+                // map_warmup_started, espera de jugadores) está en
+                // OnLevelSettled, que además levanta los bloqueos del cambio de
+                // mapa y reabre el ready.
+                OnLevelStarted(mapName);
+                AddTimer(1.0f, () => OnLevelSettled(mapName, fromLevelStart: true));
             });
 
-            // RegisterListener<Listeners.OnMapEnd>(() => {
-            //     Log($"[Listeners.OnMapEnd] Resetting match!");
-            //     ResetMatch();
-            // });
+            // Solo diagnóstico y estado administrado: corre con el nivel
+            // descargándose (ver OnLevelEnding). No resetear la partida acá.
+            RegisterListener<Listeners.OnMapEnd>(OnLevelEnding);
 
             RegisterEventHandler<EventPlayerDeath>((@event, info) =>
             {

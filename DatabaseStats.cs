@@ -1386,7 +1386,7 @@ namespace MatchZy
 
         private void Log(string message)
         {
-            Console.WriteLine("[MatchZy] " + message);
+            Console.WriteLine($"[MatchZy] [{DateTime.Now:HH:mm:ss.fff}] {message}");
         }
 
         public enum DatabaseType

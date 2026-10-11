@@ -160,14 +160,16 @@ namespace MatchZy
         private void SendUnreadyPlayersMessage()
         {
             if (!isWarmup || matchStarted) return;
+            // Es un timer REPEAT que sobrevive al changelevel: con el nivel
+            // cargando no hay a quién mostrarle nada.
+            if (IsLevelChangeInProgress) return;
             List<string> unreadyPlayers = new();
 
             foreach (var key in playerReadyStatus.Keys)
             {
-                if (playerReadyStatus[key] == false)
-                {
-                    unreadyPlayers.Add(playerData[key].PlayerName);
-                }
+                if (playerReadyStatus[key]) continue;
+                if (!playerData.TryGetValue(key, out CCSPlayerController? unreadyPlayer) || !unreadyPlayer.IsValid) continue;
+                unreadyPlayers.Add(unreadyPlayer.PlayerName);
             }
             if (unreadyPlayers.Count > 0)
             {
@@ -247,6 +249,17 @@ namespace MatchZy
         {
             if (!IsWarmupCfgReapplyAllowed()) return;
 
+            // Tras un changelevel con jugadores el server nunca quedó vacío: el
+            // primero que termina de reconectar no viene de un server dormido,
+            // y el warmup.cfg de este nivel ya se aplicó al estabilizarse. Un
+            // segundo mp_warmup_start + bot_kick mientras los demás siguen
+            // reconectando es la condición del segfault en spawn points.
+            if (IsInReconnectWindow)
+            {
+                LogInfo("Warmup", "Primer jugador del nivel reconectando tras un changelevel: el warmup.cfg ya se aplicó al cargar el nivel, no se reaplica.");
+                return;
+            }
+
             // Un segundo de margen: `exec` en Source 2 no aplica los cvars, encola
             // las líneas en el buffer de consola. Ejecutar en el mismo tick del
             // connect deja nuestro exec compitiendo contra lo que el engine encola
@@ -257,7 +270,7 @@ namespace MatchZy
             {
                 if (!IsWarmupCfgReapplyAllowed()) return;
                 Log("[HandleFirstPlayerConnected] Servidor salió de vacío, reaplicando warmup CFG");
-                ExecWarmupCfg();
+                ExecWarmupCfg("reaplicación por primer jugador");
             });
         }
 
@@ -278,8 +291,22 @@ namespace MatchZy
         private bool IsWarmupCfgReapplyAllowed() =>
             warmupCfgReapplyEnabled && isWarmup && !isPractice && !isRoundRestorePending;
 
-        private void ExecWarmupCfg()
+        private void ExecWarmupCfg(string source)
         {
+            DateTime now = DateTime.UtcNow;
+            if (lastWarmupCfgExecLevel == levelSerial && (now - lastWarmupCfgExecAtUtc).TotalSeconds < WarmupDoubleExecWindowSeconds)
+            {
+                (_, int connecting, _) = CountClientsBySlot();
+                LogWarning(CrashGuardCode.WarmupDouble, $"warmup.cfg otra vez a {(now - lastWarmupCfgExecAtUtc).TotalSeconds:0.0} s del anterior en el mismo nivel (antes: {lastWarmupCfgExecSource}, ahora: {source}; {connecting} cliente(s) todavía conectando).");
+            }
+            if (levelChangePhase == LevelChangePhase.Issued)
+            {
+                LogWarning(CrashGuardCode.WarmupDouble, $"warmup.cfg ejecutado con un changelevel ya emitido ({DescribeTransition()}, origen={source}).");
+            }
+            lastWarmupCfgExecAtUtc = now;
+            lastWarmupCfgExecSource = source;
+            lastWarmupCfgExecLevel = levelSerial;
+
             var absolutePath = Path.Join(Server.GameDirectory + "/csgo/cfg", warmupCfgPath);
 
             // Marca el momento en que arranca el warmup. CheckLiveRequired usa
@@ -347,6 +374,9 @@ namespace MatchZy
 
             playerWaitTimeoutTimer = AddTimer(waitTimeout, () =>
             {
+                // One-shot: ya disparó. Un Kill() posterior sobre este puntero
+                // podría matar otro timer que reutilice la dirección.
+                playerWaitTimeoutTimer = null;
                 if (!matchStarted && isWaitingForPlayers)
                 {
                     Log($"[PlayerWaitTimeout] Map {mapNumber}: {waitTimeout}s reached. Not all players connected. Cancelling match.");
@@ -457,7 +487,7 @@ namespace MatchZy
             return missing;
         }
 
-        private void StartWarmup()
+        private void StartWarmup(string source = "StartWarmup")
         {
             unreadyPlayerMessageTimer?.Kill();
             unreadyPlayerMessageTimer = null;
@@ -465,7 +495,7 @@ namespace MatchZy
             isWarmup = true;
             // Único punto que abre el latch: este es el warmup inicial.
             warmupCfgReapplyEnabled = true;
-            ExecWarmupCfg();
+            ExecWarmupCfg(source);
         }
 
         private void StartKnifeRound()
@@ -616,7 +646,7 @@ namespace MatchZy
         private void StartAfterKnifeWarmup()
         {
             isWarmup = true;
-            ExecWarmupCfg();
+            ExecWarmupCfg("warmup post-cuchillo");
             knifeWinnerName = knifeWinner == 3 ? reverseTeamSides["CT"].teamName : reverseTeamSides["TERRORIST"].teamName;
             ShowDamageInfo();
 
@@ -761,6 +791,10 @@ namespace MatchZy
         {
             try
             {
+                // La partida que estaba entre mapas (o con un changelevel
+                // agendado) se termina acá: el cambio pendiente no sigue.
+                ResetMapTransitionState();
+
                 // We stop demo recording if a live match was restarted
                 if (matchStarted && isDemoRecording)
                 {
@@ -883,7 +917,7 @@ namespace MatchZy
                 UpdatePlayersMap();
                 if (warmupCfgRequired)
                 {
-                    StartWarmup();
+                    StartWarmup("ResetMatch");
                 }
                 else
                 {
@@ -1368,26 +1402,25 @@ namespace MatchZy
                 return;
             }
 
+            // Con matchStarted en false también entre mapas de un BO3 (desde el
+            // timer de restartDelay - 4): sin esto, un `.map` ahí era un segundo
+            // changelevel encima del de la serie.
+            if (BlockedByMapTransition(player, "css_map")) return;
+
             if (!long.TryParse(mapName, out _) && !mapName.Contains('_'))
             {
                 mapName = "de_" + mapName;
             }
 
-            StopTvForMapChange();
-            if (long.TryParse(mapName, out _))
-            { // Check if mapName is a long for workshop map ids
-                Server.ExecuteCommand($"bot_kick");
-                Server.ExecuteCommand($"host_workshop_map \"{mapName}\"");
-            }
-            else if (Server.IsMapValid(mapName))
-            {
-                Server.ExecuteCommand($"bot_kick");
-                Server.ExecuteCommand($"changelevel \"{mapName}\"");
-            }
-            else
+            // Se valida ANTES de tocar la GOTV: antes un nombre inválido la
+            // cortaba igual y dejaba el mapa sin cambiar.
+            if (!long.TryParse(mapName, out _) && !Server.IsMapValid(mapName))
             {
                 ReplyToUserCommand(player, $"Invalid map name!");
+                return;
             }
+
+            ChangeMap(mapName, 0, "css_map");
         }
 
         private void HandleReadyRequiredCommand(CCSPlayerController? player, string commandArg)
@@ -1425,6 +1458,16 @@ namespace MatchZy
         private void CheckLiveRequired()
         {
             if (!readyAvailable || matchStarted) return;
+
+            // El ready queda cerrado durante los cambios de mapa, así que llegar
+            // acá con uno en curso es un camino no previsto. Seguir sería
+            // arrancar la cuenta regresiva (o HandleMatchStart) con el nivel
+            // nuevo cargando: mp_restartgame + live.cfg en plena reconexión.
+            if (IsMapTransitionActive)
+            {
+                LogWarning(CrashGuardCode.ReadyWindow, $"CheckLiveRequired con un cambio de mapa en curso ({DescribeTransition()}); no se arranca hasta que el nivel nuevo se estabilice.");
+                return;
+            }
 
             // Todo: Implement a same ready system for both pug and match
             int countOfReadyPlayers = playerReadyStatus.Count(kv => kv.Value == true);
@@ -1510,6 +1553,15 @@ namespace MatchZy
         private void HandleMatchStart()
         {
             Log("[HandleMatchStart] ENTER");
+            // Última barrera: lo llaman el ready, el countdown (+0.5 s, con
+            // ticks que sobreviven al changelevel) y css_start. Con un cambio
+            // de mapa en curso ejecutaría live.cfg/mp_restartgame con el nivel
+            // cargando, el SIGSEGV en BeginMatch.
+            if (IsMapTransitionActive)
+            {
+                LogWarning(CrashGuardCode.ReadyWindow, $"HandleMatchStart con un cambio de mapa en curso ({DescribeTransition()}); se descarta. El ready se reevalúa cuando el nivel nuevo se estabilice.");
+                return;
+            }
             isPractice = false;
             isDryRun = false;
             if (isRoundRestorePending)
@@ -1527,7 +1579,7 @@ namespace MatchZy
                 reverseTeamSides["CT"] = matchzyTeam1;
                 foreach (var key in playerData.Keys)
                 {
-                    if (playerData[key].TeamNum == 3)
+                    if (playerData[key].IsValid && playerData[key].TeamNum == 3)
                     {
                         matchzyTeam1.teamName = "team_" + RemoveSpecialCharacters(playerData[key].PlayerName.Replace(" ", "_"));
                         foreach (var coach in matchzyTeam1.coach)
@@ -1547,7 +1599,7 @@ namespace MatchZy
                 reverseTeamSides["TERRORIST"] = matchzyTeam2;
                 foreach (var key in playerData.Keys)
                 {
-                    if (playerData[key].TeamNum == 2)
+                    if (playerData[key].IsValid && playerData[key].TeamNum == 2)
                     {
                         matchzyTeam2.teamName = "team_" + RemoveSpecialCharacters(playerData[key].PlayerName.Replace(" ", "_"));
                         foreach (var coach in matchzyTeam2.coach)
@@ -1569,10 +1621,14 @@ namespace MatchZy
             string seriesType = "BO" + matchConfig.NumMaps.ToString();
             if (isStatsDirectSaveEnabled)
             {
+                // Base de datos sincrónica en el hilo del juego: con MySQL lento
+                // o caído congela el server justo al salir en vivo.
+                var dbStopwatch = System.Diagnostics.Stopwatch.StartNew();
                 EnsureDatabaseInitialized();
                 Log("[HandleMatchStart] InitMatch in DB");
                 liveMatchId = database.InitMatch(matchzyTeam1.teamName, matchzyTeam2.teamName, "-", isMatchSetup, liveMatchId, matchConfig.CurrentMapNumber, seriesType, matchConfig);
                 Log($"[HandleMatchStart] InitMatch OK liveMatchId={liveMatchId}");
+                ReportMainThreadStall("InitMatch (base de datos)", dbStopwatch.Elapsed);
             }
             SetupRoundBackupFile();
             Log("[HandleMatchStart] SetupRoundBackupFile OK, SKIPPING GetSpawns (only needed for .spawn practice command)");
@@ -1660,7 +1716,11 @@ namespace MatchZy
 
             // This ensures that the mp_match_restart_delay is not shorter than what is required for the GOTV recording to finish.
             // Ref: Get5
-            int restartDelay = ConVar.Find("mp_match_restart_delay")!.GetPrimitiveValue<int>();
+            //
+            // Se parte del valor CONFIGURADO, no del que dejó extendido el mapa
+            // anterior (se restaura recién al estabilizarse el nivel siguiente).
+            int configuredRestartDelay = matchRestartDelayBeforeExtension ?? ConVar.Find("mp_match_restart_delay")!.GetPrimitiveValue<int>();
+            int restartDelay = configuredRestartDelay;
             int tvDelay = GetTvDelay();
             int tvFlushDelay = tvDelay + 15;
             // El changelevel del siguiente mapa (BO3/BO5) se agenda a partir de
@@ -1676,6 +1736,7 @@ namespace MatchZy
             if (requiredDelay > restartDelay)
             {
                 Log($"Extended mp_match_restart_delay from {restartDelay} to {requiredDelay} to ensure GOTV broadcast can finish.");
+                matchRestartDelayBeforeExtension ??= configuredRestartDelay;
                 ConVar.Find("mp_match_restart_delay")!.SetValue(requiredDelay);
                 restartDelay = requiredDelay;
             }
@@ -1850,15 +1911,21 @@ namespace MatchZy
 
             KillPhaseTimers();
 
-            // CRÍTICO: Desactivar mp_match_end_restart ANTES del changelevel BO3/BO5.
-            // StartLive() lo activa con "mp_match_end_restart true" para que el
-            // engine recargue el mapa al terminar una partida. En BO1 eso es
-            // inofensivo porque EndSeries/ResetMatch no emite ningún changelevel.
-            // En BO3/BO5, sin embargo, el engine intenta recargar el mapa actual
-            // (~1 segundo DESPUÉS de que el plugin ya ejecutó "changelevel mapa2"),
-            // produciendo dos changelevel simultáneos que corrompen el estado del
-            // engine y provocan el crash del servidor (SIGSEGV / exit 139).
+            // Al terminar el intermedio, el motor hace su propio paso de fin de
+            // partida: con `mp_match_end_restart 1` (lo pone StartLive) reinicia
+            // la partida en el mismo mapa, y con 0 (si se comporta como en
+            // CS:GO; no está verificado en CS2) carga el siguiente del
+            // mapgroup/mapcycle, que con el mapgroup vacío de este server vuelve
+            // a ser un reinicio. Ninguno se puede dejar correr ANTES del
+            // changelevel de MatchZy: el log del crash del 2026-10-11 muestra el
+            // RestartRound del motor ~4 s antes del changelevel, porque el motor
+            // cuenta el intermedio desde antes de cs_win_panel_match. Por eso
+            // BeginSeriesMapTransition corre mp_match_restart_delay del motor
+            // EngineMatchEndMarginSeconds después del changelevel del plugin, y
+            // se pone `mp_match_end_restart false` para que, si igual llegara a
+            // actuar, al menos no reinicie la partida en curso.
             Server.ExecuteCommand("mp_match_end_restart false");
+            BeginSeriesMapTransition(nextMap, restartDelay, configuredRestartDelay);
 
             // Identidad de la serie a la que pertenece el cambio de mapa agendado
             // abajo. Ver el chequeo dentro del timer.
@@ -1901,8 +1968,15 @@ namespace MatchZy
 
                 // Resetear estado ANTES del changelevel para que los timers del
                 // warmup que arranquen en OnMapStart vean el estado correcto.
+                //
+                // El ready queda CERRADO hasta que el mapa siguiente se
+                // estabilice (OnLevelSettled lo reabre). Abrirlo acá, con todos
+                // todavía en ready por el mapa anterior, dejaba que un `.ready`,
+                // un cambio de equipo o una reconexión en estos 3 s arrancara la
+                // cuenta regresiva, cuyos ticks sobreviven al changelevel y
+                // terminaban en HandleMatchStart con el nivel nuevo cargando.
                 matchStarted = false;
-                readyAvailable = true;
+                readyAvailable = false;
                 isPaused = false;
                 isWarmup = true;
                 isKnifeRound = false;
@@ -1920,7 +1994,7 @@ namespace MatchZy
                 // jugadores ya invalidadas → crash. OnMapStart ya llama
                 // StartWarmup() cuando isWarmup == true.
 
-                ChangeMap(nextMap, 3.0f);
+                ChangeMap(nextMap, 3.0f, "siguiente mapa de la serie");
 
                 // BO3/BO5: el watchdog de espera de jugadores se reinicia
                 // desde `OnMapStart` del mapa siguiente (junto al evento
@@ -1928,36 +2002,6 @@ namespace MatchZy
                 // contar cuando el mapa ya cargó de verdad y no durante el
                 // `changelevel`, que tarda 15-30 s y consumía parte del
                 // tiempo de espera real.
-            });
-        }
-
-        private void ChangeMap(string mapName, float delay)
-        {
-            Log($"[ChangeMap] Changing map to {mapName} with delay {delay}");
-            AddTimer(delay, () =>
-            {
-                StopTvForMapChange();
-                if (long.TryParse(mapName, out _))
-                {
-                    Server.ExecuteCommand($"bot_kick");
-                    Server.ExecuteCommand($"host_workshop_map \"{mapName}\"");
-                }
-                else if (Server.IsMapValid(mapName))
-                {
-                    Server.ExecuteCommand($"bot_kick");
-                    Server.ExecuteCommand($"changelevel \"{mapName}\"");
-                }
-                else
-                {
-                    // Antes esta rama era un no-op mudo, y es el peor final posible:
-                    // el `Log` de arriba ya anunció el cambio, `StopTvForMapChange`
-                    // ya cortó la GOTV, y el flujo que llamó sigue montando la
-                    // partida (warmup, cvars, nombres) sobre el mapa VIEJO. Desde
-                    // afuera se ve un arranque normal en el mapa equivocado, y como
-                    // ningún evento de MatchZy lleva el mapa realmente cargado, el
-                    // backend tampoco puede notarlo: registra el mapa que pidió.
-                    Log($"[ChangeMap] ERROR: '{mapName}' no es un mapa válido en este servidor y no es un id de workshop. El mapa NO se cambió; la partida va a seguir en '{Server.MapName}'.");
-                }
             });
         }
 
@@ -2010,6 +2054,19 @@ namespace MatchZy
         {
             if (isDryRun) RandomizeSpawns();
             if (!matchStarted) return;
+            // round_start con el mapa ya terminado: es el reinicio de fin de
+            // partida del motor llegando antes que el changelevel de MatchZy.
+            // HandleCoaches armaría KillCoaches para ~13 s después del
+            // changelevel y el backup quedaría como ronda 0 del mapa siguiente
+            // con los datos del anterior.
+            if (isBetweenSeriesMaps || IsLevelChangeInProgress)
+            {
+                string when = isBetweenSeriesMaps
+                    ? $"{(DateTime.UtcNow - seriesMapEndedAtUtc).TotalSeconds:0.0} s después del fin de mapa, antes de que el mapa siguiente se estabilice"
+                    : "con un cambio de nivel en curso";
+                LogWarning(CrashGuardCode.EngineRestart, $"round_start con la partida iniciada {when} ({DescribeTransition()}). Se ignora: sin coaches, backup ni hostname.");
+                return;
+            }
             playerHasTakenDamage = false;
             HandleCoaches();
             CreateMatchZyRoundDataBackup();
@@ -2861,9 +2918,34 @@ namespace MatchZy
             return regex.Replace(input, "");
         }
 
+        // Hora local del server con milisegundos, igual que las líneas de
+        // CSSharp: sin hora no hay forma de ordenar las líneas de MatchZy contra
+        // las del motor cuando se analiza un crash.
+        private static string LogTimestamp() => DateTime.Now.ToString("HH:mm:ss.fff");
+
         private void Log(string message)
         {
-            Console.WriteLine("[MatchZy] " + message);
+            Console.WriteLine($"[MatchZy] [{LogTimestamp()}] {message}");
+        }
+
+        /// <summary>
+        /// Hito normal del ciclo de vida que sirve para reconstruir la secuencia
+        /// de un crash (cambio de nivel agendado, emitido, nivel cargado, etc.).
+        /// </summary>
+        private void LogInfo(string area, string message)
+        {
+            Console.WriteLine($"[MatchZy] [{LogTimestamp()}] [INFO] [{area}] {message}");
+        }
+
+        /// <summary>
+        /// Se dio una de las condiciones de carrera que pueden tirar el server
+        /// durante un changelevel. Todas llevan el prefijo `CrashGuard/` y un
+        /// código fijo (ver <see cref="CrashGuardCode"/>) para poder buscarlas
+        /// en los logs y descartarlas una por una en futuras versiones.
+        /// </summary>
+        private void LogWarning(string code, string message)
+        {
+            Console.WriteLine($"[MatchZy] [{LogTimestamp()}] [WARNING] [CrashGuard/{code}] {message}");
         }
 
         private void AutoStart()
@@ -2877,7 +2959,7 @@ namespace MatchZy
             {
                 readyAvailable = true;
                 isPractice = false;
-                StartWarmup();
+                StartWarmup("AutoStart");
             }
             if (autoStartMode == 2)
             {
@@ -3071,12 +3153,31 @@ namespace MatchZy
             return false;
         }
 
-        public void SwitchPlayerTeam(CCSPlayerController player, CsTeam team)
+        /// <param name="joiningTeam">
+        /// Equipo al que el jugador está entrando según el evento player_team.
+        /// En el handler Post `player.Team` todavía puede ser el equipo viejo, y
+        /// sin esto cada reconexión tras un changelevel recibía un SwitchTeam +
+        /// Respawn redundante en plena carga del nivel.
+        /// </param>
+        public void SwitchPlayerTeam(CCSPlayerController player, CsTeam team, CsTeam? joiningTeam = null)
         {
-            if (player.Team == team) return;
+            if (player.Team == team || joiningTeam == team) return;
 
             Server.NextFrame(() =>
             {
+                // Se revalida en el frame en que se actúa: entre medio el
+                // jugador pudo irse o el nivel pudo empezar a descargarse.
+                if (!player.IsValid)
+                {
+                    LogInfo("TeamSwitch", $"El jugador ya no es válido en el frame siguiente; se omite el cambio a {team}.");
+                    return;
+                }
+                if (levelChangePhase == LevelChangePhase.Issued)
+                {
+                    LogWarning(CrashGuardCode.TeamSwitch, $"Cambio de {player.PlayerName} a {team} con un changelevel emitido ({DescribeTransition()}); se omite.");
+                    return;
+                }
+
                 if (team == CsTeam.Spectator)
                 {
                     player.ChangeTeam(team);
@@ -3087,6 +3188,27 @@ namespace MatchZy
                     var gameRules = GetGameRules();
                     if (gameRules.WarmupPeriod)
                     {
+                        if (!player.PlayerPawn.IsValid || player.PlayerPawn.Value == null)
+                        {
+                            LogInfo("TeamSwitch", $"{player.PlayerName} cambiado a {team} sin respawn: todavía no tiene pawn.");
+                            return;
+                        }
+                        if (IsInReconnectWindow)
+                        {
+                            // Respawn de un jugador mientras el resto sigue
+                            // reconectando: una vez por nivel como WARNING para
+                            // poder descartarlo; el resto como INFO.
+                            string message = $"SwitchTeam + Respawn de {player.PlayerName} a {team} durante la ventana de reconexión del nivel.";
+                            if (!teamSwitchDuringReconnectWarned)
+                            {
+                                teamSwitchDuringReconnectWarned = true;
+                                LogWarning(CrashGuardCode.TeamSwitch, message + " (primer caso del nivel; los siguientes van como INFO)");
+                            }
+                            else
+                            {
+                                LogInfo("TeamSwitch", message);
+                            }
+                        }
                         player.Respawn();
                     }
                 }

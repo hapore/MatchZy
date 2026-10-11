@@ -68,6 +68,7 @@ namespace MatchZy
                     Log($"[LoadMatch] Previous match's demo is still finalizing, cannot load a new match yet!");
                     return;
                 }
+                if (BlockedByMapTransition(player, "matchzy_loadmatch")) return;
                 string fileName = command.ArgString;
                 string filePath = Path.Join(Server.GameDirectory + "/csgo", fileName);
                 if (!File.Exists(filePath)) 
@@ -112,6 +113,7 @@ namespace MatchZy
                 Log($"[LoadMatchDataCommand] Previous match's demo is still finalizing, cannot load a new match yet!");
                 return;
             }
+            if (BlockedByMapTransition(player, "matchzy_loadmatch_url")) return;
             string url = command.ArgByIndex(1);
 
             string headerName = command.ArgCount > 3 ? command.ArgByIndex(2) : "";
@@ -126,9 +128,13 @@ namespace MatchZy
                 Log($"[LoadMatchDataCommand] Invalid URL: {url}. Please provide a valid URL to load the match!");
                 return;
             }
+            // La descarga bloquea el hilo del juego (.Result): sin ticks ni
+            // respuestas RCON hasta que termina. Con el timeout por defecto de
+            // HttpClient (100 s) los clientes llegaban a caerse por timeout.
+            var httpStopwatch = System.Diagnostics.Stopwatch.StartNew();
             try
             {
-                HttpClient httpClient = new();
+                using HttpClient httpClient = new() { Timeout = TimeSpan.FromSeconds(MainThreadHttpTimeoutSeconds) };
                 if (headerName != "")
                 {
                     httpClient.DefaultRequestHeaders.Add(headerName, headerValue);
@@ -138,6 +144,7 @@ namespace MatchZy
                 if (response.IsSuccessStatusCode)
                 {
                     string jsonData = response.Content.ReadAsStringAsync().Result;
+                    ReportMainThreadStall("matchzy_loadmatch_url (descarga)", httpStopwatch.Elapsed);
                     Log($"[LoadMatchFromURL] Received following data: {jsonData}");
 
                     bool success = LoadMatchFromJSON(jsonData);
@@ -157,6 +164,7 @@ namespace MatchZy
                 }
                 else
                 {
+                    ReportMainThreadStall("matchzy_loadmatch_url (descarga fallida)", httpStopwatch.Elapsed);
                     // command.ReplyToCommand($"[LoadMatchFromURL] HTTP request failed with status code: {response.StatusCode}");
                     ReplyToUserCommand(player, Localizer["matchzy.mm.httprequestfailed", response.StatusCode]);
                     Log($"[LoadMatchFromURL] HTTP request failed with status code: {response.StatusCode}");
@@ -164,6 +172,7 @@ namespace MatchZy
             }
             catch (Exception e)
             {
+                ReportMainThreadStall("matchzy_loadmatch_url (error)", httpStopwatch.Elapsed);
                 Log($"[LoadMatchFromURL - FATAL] An error occured: {e.Message}");
                 return;
             }
@@ -356,6 +365,17 @@ namespace MatchZy
 
             LoadClientNames();
 
+            // Partida cargada desde práctica: isPractice quedaba en true y, al
+            // cargar el mapa, se ejecutaban warmup.cfg Y prac.cfg en el mismo
+            // frame (mp_warmup_start, mp_warmup_end, mp_restartgame, sv_cheats).
+            if (isPractice || isDryRun)
+            {
+                LogWarning(CrashGuardCode.Practice, "Partida cargada con el modo práctica activo; se sale de práctica antes de montar la partida.");
+                isPractice = false;
+                isDryRun = false;
+                ExecUnpracCommands();
+            }
+
             if (matchConfig.SkipVeto)
             {
                 // Copy the first k maps from the maplist to the final match maps.
@@ -382,30 +402,56 @@ namespace MatchZy
                 // servidor que se queda en standby en el mismo mapa nunca se recupera solo. Un
                 // `changelevel` lo subsana, así que toda partida arranca sobre un nivel fresco.
                 SetCorrectGameMode();
-                ChangeMap(mapName, 0);
+                ChangeMap(mapName, 0, "matchzy_loadmatch");
             }
             else
             {
                 isPreVeto = true;
-            } 
+            }
 
-            readyAvailable = true;
+            // Con el changelevel agendado (sale en el próximo tick del timer
+            // system, ≤ 0.1 s), el warmup, el ready y la espera de jugadores
+            // arrancan cuando el mapa de la partida se estabiliza
+            // (OnLevelSettled). Antes warmup.cfg (mp_warmup_start, bot_kick),
+            // el kickid de UpdatePlayersMap y un timer REPEAT se ejecutaban
+            // sobre el nivel viejo una décima antes del changelevel, lo mismo
+            // que el comentario de HandleMatchEnd prohíbe para el BO3.
+            bool levelChangePending = IsLevelChangeInProgress;
+            readyAvailable = !levelChangePending;
 
             // This is done before starting warmup so that cvars like get5_remote_log_url are set properly to send the events
             ExecuteChangedConvars();
 
-            StartWarmup();
+            if (levelChangePending)
+            {
+                isWarmup = true;
+                LogInfo("MapChange", "LoadMatchFromJSON: warmup, ready y espera de jugadores se difieren hasta que cargue el mapa de la partida.");
+            }
+            else
+            {
+                StartWarmup("LoadMatchFromJSON");
+            }
 
             isMatchSetup = true;
 
             // Start player-wait system: cancel match if not all players connect in time.
-            // StartPlayerWaitSystem() is also called from HandleMatchEnd for BO3/BO5 map transitions.
-            StartPlayerWaitSystem();
+            // Para el mapa siguiente de un BO3/BO5 lo rearranca OnLevelSettled.
+            if (levelChangePending)
+            {
+                playerWaitDeferredToMapStart = true;
+            }
+            else
+            {
+                StartPlayerWaitSystem();
+            }
 
             if(matchConfig.SkipVeto) SetMapSides();
 
             SetTeamNames();
-            UpdatePlayersMap();
+            // Con el cambio de nivel en curso, los que no son de la partida se
+            // echan al reconectar (EventPlayerConnectFull), no con un kickid
+            // pegado al changelevel.
+            if (!levelChangePending) UpdatePlayersMap();
             UpdateHostname();
 
             var seriesStartedEvent = new MatchZySeriesStartedEvent

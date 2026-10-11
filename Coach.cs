@@ -250,6 +250,19 @@ public partial class MatchZy
 
     private void KillCoaches()
     {
+        // One-shot que ya disparó: nadie tiene que hacerle Kill() a un puntero
+        // que el timer system pudo haber reutilizado para otro timer.
+        coachKillTimer = null;
+
+        // Armado en un round_start del nivel viejo, cae hasta 17 s después: con
+        // un cambio de mapa en curso haría Teleport/CommitSuicide sobre
+        // jugadores que están reconectando en el nivel nuevo.
+        if (IsMapTransitionActive)
+        {
+            LogWarning(CrashGuardCode.CoachTimer, $"KillCoaches disparó durante un cambio de mapa ({DescribeTransition()}); se omite.");
+            return;
+        }
+
         if (isPaused || IsTacticalTimeoutActive()) return;
         HashSet<CCSPlayerController> coaches = GetAllCoaches();
         if (IsWingmanMode() || coaches.Count == 0) return;

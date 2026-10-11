@@ -54,6 +54,7 @@ namespace MatchZy
                 ReplyToUserCommand(player, Localizer["matchzy.sleep.sleepwhenmatchstared"]);
                 return;
             }
+            if (BlockedByMapTransition(player, "css_sleep")) return;
             StartSleepMode();
         }
 

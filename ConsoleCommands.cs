@@ -474,28 +474,12 @@ namespace MatchZy
             {
                 if (!isPractice)
                 {
-                    // Server.PrintToChatAll($"{chatPrefix} An admin force-ended the match.");
-                    PrintToAllChat(Localizer["matchzy.cc.endmatch"]);
-
-                    // Notificar al backend que la partida fue cancelada por admin.
-                    // Capturamos el matchId ANTES de ResetMatch() porque éste lo
-                    // limpia. El handler corre síncrono dentro del comando, así
-                    // que disparamos el HTTP en background con Task.Run.
-                    long cancelledMatchId = liveMatchId;
                     string adminId = player?.SteamID.ToString() ?? "console";
-                    if (cancelledMatchId != 0)
-                    {
-                        var cancelledEvent = new MatchCancelledEvent
-                        {
-                            MatchId = cancelledMatchId,
-                            Reason = "admin_endmatch",
-                            Missing = new List<string>(),
-                        };
-                        Task.Run(async () => await SendEventAsync(cancelledEvent));
-                        Log($"[OnEndMatchCommand] Admin {adminId} cancelled match {cancelledMatchId} via css_endmatch.");
-                    }
-
-                    ResetMatch();
+                    // Con el nivel cargando, ResetMatch ejecutaría warmup.cfg,
+                    // kickid y escaneos de entidades en plena carga: se difiere.
+                    // Con el cambio solo agendado, se cancela y sigue.
+                    if (DeferResetDuringLevelChange(player, "css_endmatch", () => EndMatchByAdmin(adminId))) return;
+                    EndMatchByAdmin(adminId);
                 }
                 else
                 {
@@ -509,6 +493,31 @@ namespace MatchZy
             }
         }
 
+        private void EndMatchByAdmin(string adminId)
+        {
+            // Server.PrintToChatAll($"{chatPrefix} An admin force-ended the match.");
+            PrintToAllChat(Localizer["matchzy.cc.endmatch"]);
+
+            // Notificar al backend que la partida fue cancelada por admin.
+            // Capturamos el matchId ANTES de ResetMatch() porque éste lo
+            // limpia. El handler corre síncrono dentro del comando, así
+            // que disparamos el HTTP en background con Task.Run.
+            long cancelledMatchId = liveMatchId;
+            if (cancelledMatchId != 0)
+            {
+                var cancelledEvent = new MatchCancelledEvent
+                {
+                    MatchId = cancelledMatchId,
+                    Reason = "admin_endmatch",
+                    Missing = new List<string>(),
+                };
+                Task.Run(async () => await SendEventAsync(cancelledEvent));
+                Log($"[OnEndMatchCommand] Admin {adminId} cancelled match {cancelledMatchId} via css_endmatch.");
+            }
+
+            ResetMatch();
+        }
+
         [ConsoleCommand("css_restart", "Restarts the match")]
         [ConsoleCommand("css_rr", "Restarts the match")]
         public void OnRestartMatchCommand(CCSPlayerController? player, CommandInfo? command)
@@ -517,6 +526,7 @@ namespace MatchZy
             {
                 if (!isPractice)
                 {
+                    if (DeferResetDuringLevelChange(player, "css_restart", () => ResetMatch())) return;
                     ResetMatch();
                 }
                 else
@@ -547,23 +557,18 @@ namespace MatchZy
                 SendPlayerNotAdminMessage(player);
                 return;
             }
+            if (BlockedByMapTransition(player, "css_rmap")) return;
+
             string currentMapName = Server.MapName;
-            StopTvForMapChange();
-            if (long.TryParse(currentMapName, out _))
-            { // Check if mapName is a long for workshop map ids
-                Server.ExecuteCommand($"bot_kick");
-                Server.ExecuteCommand($"host_workshop_map \"{currentMapName}\"");
-            }
-            else if (Server.IsMapValid(currentMapName))
-            {
-                Server.ExecuteCommand($"bot_kick");
-                Server.ExecuteCommand($"changelevel \"{currentMapName}\"");
-            }
-            else
+            if (!long.TryParse(currentMapName, out _) && !Server.IsMapValid(currentMapName))
             {
                 // ReplyToUserCommand(player, "Invalid map name!");
                 ReplyToUserCommand(player, Localizer["matchzy.cc.invalidmap"]);
+                return;
             }
+            // Pasa por ChangeMap para que la parada de la GOTV/demo no comparta
+            // frame con el changelevel y quede el ciclo de vida registrado.
+            ChangeMap(currentMapName, 0, "css_rmap");
         }
 
         [ConsoleCommand("css_start", "Force starts the match")]
@@ -583,6 +588,10 @@ namespace MatchZy
                 {
                     //ReplyToUserCommand(player, "Start command cannot be used if match is already started! If you want to unpause, please use .unpause");
                     ReplyToUserCommand(player, Localizer["matchzy.cc.startmatchstarted"]);
+                }
+                else if (BlockedByMapTransition(player, "css_start"))
+                {
+                    return;
                 }
                 else
                 {
@@ -648,6 +657,7 @@ namespace MatchZy
                 ReplyToUserCommand(player, Localizer["matchzy.cc.match"]);
                 return;
             }
+            if (BlockedByMapTransition(player, "css_match")) return;
 
             StartMatchMode();
         }
@@ -667,6 +677,7 @@ namespace MatchZy
                 ReplyToUserCommand(player, Localizer["matchzy.cc.exitprac"]);
                 return;
             }
+            if (BlockedByMapTransition(player, "css_exitprac")) return;
 
             StartMatchMode();
         }

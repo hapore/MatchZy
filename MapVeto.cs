@@ -346,21 +346,25 @@ namespace MatchZy
             // Cambio de mapa SIEMPRE, aunque el mapa elegido sea el que ya está cargado.
             // Ver el comentario equivalente en MatchManagement.cs
             SetCorrectGameMode();
-            float delay = 7.0f;
+            // 7 s para leer los mapas elegidos + 3 s del ChangeMap original. Se
+            // agenda de una vez para que toda la espera cuente como cambio de
+            // nivel en curso (bloquea comandos, ready y salida en vivo).
+            float delay = 10.0f;
             mapChangePending = true;
             // Todo: Implement displayGotvVeto cvar
             // if (displayGotvVeto) {
             //     delay += GetTvDelay();
             // }
-            AddTimer(delay, () => {
-                string nextMap = matchConfig.Maplist[matchConfig.CurrentMapNumber];
-                ChangeMap(nextMap, 3);
-            });
+            ChangeMap(matchConfig.Maplist[matchConfig.CurrentMapNumber], delay, "fin del veto");
             isWarmup = true;
-            readyAvailable = true;
+            // El ready se reabre en el mapa elegido (OnLevelSettled). Abierto
+            // acá, un `.ready` completo en estos 10 s salía en vivo sobre el
+            // mapa del veto (mp_restartgame, tv_record) justo antes del
+            // changelevel.
+            readyAvailable = false;
             isPreVeto = false;
             isVeto = false;
-            StartWarmup();
+            StartWarmup("fin del veto");
         }
 
 

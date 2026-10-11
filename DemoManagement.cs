@@ -146,15 +146,26 @@ namespace MatchZy
             });
         }
 
-        public void StopTvForMapChange()
+        /// <summary>
+        /// Corta el broadcast y la demo antes de un changelevel. Devuelve qué
+        /// se cortó para que ChangeMap separe el changelevel de ese cierre.
+        /// </summary>
+        public (bool TvBroadcastStopped, bool DemoStopped) StopTvForMapChange()
         {
             bool tvBroadcast = ConVar.Find("tv_broadcast")!.GetPrimitiveValue<bool>();
             if (tvBroadcast) Server.ExecuteCommand("tv_broadcast 0");
+            bool demoStopped = false;
             if (isDemoRecording)
             {
+                // En el BO3 la demo se corta al menos 9.5 s antes del
+                // changelevel; llegar acá grabando es un css_rmap, un .map o un
+                // restore a otro mapa con la partida en vivo.
+                LogWarning(CrashGuardCode.GotvSameFrame, $"La demo '{activeDemoFile}' seguía grabando al cambiar de nivel; se corta ahora y el changelevel se demora para no cerrarla en el mismo frame.");
                 Server.ExecuteCommand("tv_stoprecord");
                 isDemoRecording = false;
+                demoStopped = true;
             }
+            return (tvBroadcast, demoStopped);
         }
 
         public int GetTvDelay()

@@ -140,6 +140,7 @@ namespace MatchZy
                 return;
             }
             if (!isMatchLive) return;
+            if (BlockedByMapTransition(player, "css_restore")) return;
 
             if (!string.IsNullOrWhiteSpace(commandArg))
             {
@@ -205,8 +206,10 @@ namespace MatchZy
 
         private void RestoreRoundBackup(CCSPlayerController? player, string fileName)
         {
-
- 
+            // Cubre también `.stop` y el restore pendiente: un restore con un
+            // cambio de nivel en curso ejecutaría mp_backup_restore_load_file,
+            // live.cfg o un segundo changelevel con el nivel cargando.
+            if (BlockedByMapTransition(player, $"restore '{fileName}'")) return;
 
             if (IsHalfTimePhase())
             {
@@ -312,7 +315,7 @@ namespace MatchZy
                 {
                     if (map_name != Server.MapName)
                     {
-                        ChangeMap(map_name, 0);
+                        ChangeMap(map_name, 0, "restore de backup");
                         isRoundRestorePending = true;
                         pendingRestoreFileName = fileName;
                         // Returning from here, backup will be restored again once the map is changed.
@@ -552,8 +555,9 @@ namespace MatchZy
                 SendPlayerNotAdminMessage(player);
                 return;
             }
-            
-       
+            if (BlockedByMapTransition(player, "matchzy_loadbackup")) return;
+
+
            // var fileName = command.GetArg(1);
            var  fileName = ExtractJsonFileName(command.ArgString);
 
@@ -580,9 +584,14 @@ namespace MatchZy
                 Log($"[LoadBackupFromURL] Invalid URL: {url}. Please provide a valid URL to load the backup!");
                 return;
             }
+            if (BlockedByMapTransition(player, "matchzy_loadbackup_url")) return;
+
+            // Igual que matchzy_loadmatch_url: la descarga bloquea el hilo del
+            // juego, y acá suele ser con la partida en vivo y gente conectada.
+            var httpStopwatch = System.Diagnostics.Stopwatch.StartNew();
             try
             {
-                HttpClient httpClient = new();
+                using HttpClient httpClient = new() { Timeout = TimeSpan.FromSeconds(MainThreadHttpTimeoutSeconds) };
                 if (headerName != "")
                 {
                     httpClient.DefaultRequestHeaders.Add(headerName, headerValue);
@@ -592,6 +601,7 @@ namespace MatchZy
                 if (response.IsSuccessStatusCode)
                 {
                     string jsonData = response.Content.ReadAsStringAsync().Result;
+                    ReportMainThreadStall("matchzy_loadbackup_url (descarga)", httpStopwatch.Elapsed);
                     Log($"[LoadBackupFromURL] Received following data: {jsonData}");
                     string fileName = Guid.NewGuid().ToString() + ".json";
                     string filePath = Path.Combine(Server.GameDirectory, "csgo", "MatchZyDataBackup", fileName);
@@ -608,12 +618,14 @@ namespace MatchZy
                 }
                 else
                 {
+                    ReportMainThreadStall("matchzy_loadbackup_url (descarga fallida)", httpStopwatch.Elapsed);
                     ReplyToUserCommand(player, Localizer["matchzy.mm.httprequestfailed", response.StatusCode]);
                     Log($"[LoadBackupFromURL] HTTP request failed with status code: {response.StatusCode}");
                 }
             }
             catch (Exception e)
             {
+                ReportMainThreadStall("matchzy_loadbackup_url (error)", httpStopwatch.Elapsed);
                 Log($"[LoadBackupFromURL - FATAL] An error occured: {e.Message}");
                 return;
             }
