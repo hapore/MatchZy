@@ -711,6 +711,16 @@ namespace MatchZy
 
         private void StartLive()
         {
+            // Pausa pedida en el cuchillo o en la elección de lado que el motor
+            // todavía no aplicó: se suelta ANTES del mp_restartgame de live.cfg
+            // y se vuelve a pedir en el freezetime de la primera ronda en vivo.
+            // Sin cuchillo (warmup → live) no hay nada pendiente que trasladar.
+            if (isSideSelectionPhase) CarryPendingPauseToLive("la elección de lado");
+            if (pauseCarriedToLive != null)
+            {
+                AddTimer(CarriedPauseApplyDelaySeconds, ApplyPauseCarriedToLive);
+            }
+
             Log("[StartLive] ENTER -> SetupLiveFlagsAndCfg");
             // Reinicia las estadísticas por-mapa (KAST, knife kills, bomb plants,
             // flash assists, etc.) al inicio de cada mapa. Sin esto, en un BO3/BO5
@@ -873,6 +883,7 @@ namespace MatchZy
                 lastGrenadesData = new();
                 nadeSpecificLastGrenadeData = new();
                 UnpauseMatch();
+                pauseCarriedToLive = null;
 
                 matchzyTeam1.teamName = "COUNTER-TERRORISTS";
                 matchzyTeam2.teamName = "TERRORISTS";
@@ -2255,7 +2266,14 @@ namespace MatchZy
 
         private void PauseMatch(CCSPlayerController? player, CommandInfo? command)
         {
-            if (isMatchLive && isPaused)
+            // .tech vale en vivo y en la ronda de cuchillo. Antes, fuera de vivo
+            // no hacía nada y no avisaba.
+            if (!matchStarted || !IsPausablePhase)
+            {
+                ReplyToUserCommand(player, Localizer["matchzy.pause.notpausablephase"]);
+                return;
+            }
+            if (isPaused)
             {
                 // ReplyToUserCommand(player, "Match is already paused!");
                 ReplyToUserCommand(player, Localizer["matchzy.utility.paused"]);
@@ -2294,7 +2312,7 @@ namespace MatchZy
                     return;
                 }
             }
-            if (isMatchLive && !isPaused)
+            if (!isPaused)
             {
                 if (player == null) return;
 
@@ -2309,6 +2327,8 @@ namespace MatchZy
                 }
                 else
                 {
+                    // La pausa técnica es de los equipos; desde espectador pausa un admin con .fp.
+                    ReplyToUserCommand(player, Localizer["matchzy.pause.spectatorcannotpause"]);
                     return;
                 }
 
@@ -2331,15 +2351,24 @@ namespace MatchZy
             }
         }
 
+        // Sin chequeo de equipo a propósito: un admin pausa desde cualquier
+        // equipo, incluido espectador, en vivo, en el cuchillo o en la elección
+        // de lado.
         private void ForcePauseMatch(CCSPlayerController? player, CommandInfo? command)
         {
-            if (!matchStarted) return;
             if (!IsPlayerAdmin(player, "css_forcepause", "@css/config"))
             {
                 SendPlayerNotAdminMessage(player);
                 return;
             }
-            if (isMatchLive && isPaused)
+            // Antes esto salía en silencio (y antes del chequeo de admin): en el
+            // warmup un .fp parecía no hacer nada.
+            if (!matchStarted)
+            {
+                ReplyToUserCommand(player, Localizer["matchzy.pause.nomatchtopause"]);
+                return;
+            }
+            if (isPaused)
             {
                 // ReplyToUserCommand(player, "Match is already paused!");
                 ReplyToUserCommand(player, Localizer["matchzy.utility.paused"]);
@@ -2370,11 +2399,27 @@ namespace MatchZy
             {
                 Server.PrintToConsole($"[MatchZy] {Localizer["matchzy.pause.adminpausedthematch"]}");
             }
+            string phase = isKnifeRound ? "cuchillo" : isSideSelectionPhase ? "elección de lado" : isMatchLive ? "en vivo" : "otra";
+            LogInfo("Pause", $"Pausa de admin pedida por {(player == null ? "consola" : $"{player.PlayerName} (equipo {player.TeamNum})")} en fase {phase}.");
             SetMatchPausedFlags();
         }
 
         private void ForceUnpauseMatch(CCSPlayerController? player, CommandInfo? command)
         {
+            // Pausa pedida en el cuchillo que espera a la primera ronda en vivo:
+            // un admin la puede cancelar antes de que se aplique.
+            if (!isPaused && pauseCarriedToLive != null)
+            {
+                if (!IsPlayerAdmin(player, "css_forceunpause", "@css/config"))
+                {
+                    SendPlayerNotAdminMessage(player);
+                    return;
+                }
+                pauseCarriedToLive = null;
+                PrintToAllChat(Localizer["matchzy.pause.carriedcancelled"]);
+                LogInfo("Pause", "Pausa trasladada del cuchillo cancelada por un admin antes de aplicarse.");
+                return;
+            }
             if (matchStarted && isPaused)
             {
                 if (!IsPlayerAdmin(player, "css_forceunpause", "@css/config"))

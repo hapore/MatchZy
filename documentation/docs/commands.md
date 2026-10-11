@@ -5,8 +5,9 @@ Most of the commands can also be used using ! prefix instead of . (like !ready)
 - `.unready` Marks the player unready (Alias: `.ur`, `.notready`)
 - `.forceready` Force-readies the player's team (Only works when using Match setup using JSON/Get5)
 - `.pause` Starts a tactical timeout of `matchzy_pause_duration` seconds (Alias: `.p`)
-- `.tech` Pauses the match in freezetime with no time limit. Each team can use it `matchzy_max_tech_pauses_allowed` times per map
+- `.tech` Pauses the match in freezetime with no time limit. Each team can use it `matchzy_max_tech_pauses_allowed` times per map (pauses used in the knife round don't count towards it)
 - `.unpause` During a `.pause` timeout, the team that called it cancels it right away. During a `.tech` pause, both teams need to type .unpause to unpause the match (Alias: `.up`)
+- `.pause`, `.tech` and `.unpause` work while the match is live and during the knife round. Like any pause, it starts in the next freezetime: if it is requested once the knife round is already being played, it is applied in the freezetime of the first live round instead
 - `.stay` Stays on the same side (For knife winner, after the knife round)
 - `.switch`/`.swap` Switches the side (For knife winner, after the knife round)
 - `.stop` Restore the backup of the current round (Both teams need to type .stop to restore the current round)
@@ -64,8 +65,8 @@ Most of the commands can also be used using ! prefix instead of . (like !ready)
 
 - `.start` Force starts a match.
 - `.restart` Force restarts/resets a match. (Alias: `.endmatch`, `.forceend`)
-- `.forcepause` Pauses the match as an admin (Players cannot unpause the admin-paused match). (Alias: `.fp`)
-- `.forceunpause` Force unpauses the match. (Alias: `.fup`)
+- `.forcepause` Pauses the match as an admin (Players cannot unpause the admin-paused match). Works from any team, including spectators, once the match has started (knife round included). (Alias: `.fp`)
+- `.forceunpause` Force unpauses the match. Also cancels a pause that is still pending for the first live round. (Alias: `.fup`)
 - `.restore <round>` Restores the backup of provided round number.
 - `.skipveto` / `.sv` Skips the current veto phase.
 - `.roundknife` / `.rk` Toggles the knife round. If disabled, match will directly go from Warmup phase to Live phase.

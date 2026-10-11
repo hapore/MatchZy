@@ -209,48 +209,59 @@ namespace MatchZy
 
         // .pause es el timeout táctico del juego (timeout_*_start), de
         // matchzy_pause_duration segundos. El equipo que lo pidió puede
-        // cancelarlo antes con .unpause (ver CancelTacticalPause).
+        // cancelarlo antes con .unpause (ver CancelTacticalPause). Vale en vivo
+        // y en la ronda de cuchillo.
         [ConsoleCommand("css_pause", "Starts a tactical timeout for the requested team")]
         public void OnPauseCommand(CCSPlayerController? player, CommandInfo? command)
         {
             if (player == null) return;
 
-            if (matchStarted && isMatchLive)
+            if (!matchStarted || !IsPausablePhase)
             {
-                Log($"[.pause command sent via chat] Sent by: {player.UserId}, connectedPlayers: {connectedPlayers}");
-                if (isPaused)
+                ReplyToUserCommand(player, Localizer["matchzy.pause.notpausablephase"]);
+                return;
+            }
+
+            if (player.TeamNum != 2 && player.TeamNum != 3)
+            {
+                // Los timeouts son de los equipos; desde espectador pausa un admin con .fp.
+                ReplyToUserCommand(player, Localizer["matchzy.pause.spectatorcannotpause"]);
+                return;
+            }
+
+            Log($"[.pause command sent via chat] Sent by: {player.UserId}, connectedPlayers: {connectedPlayers}, knife: {isKnifeRound}");
+            if (isPaused)
+            {
+                // ReplyToUserCommand(player, "Match is already paused, cannot start a tactical timeout!");
+                ReplyToUserCommand(player, Localizer["matchzy.cc.matchpaused"]);
+                return;
+            }
+            var gameRules = Utilities.FindAllEntitiesByDesignerName<CCSGameRulesProxy>("cs_gamerules").First().GameRules!;
+            // La duración se fija justo antes de cada timeout para que ningún
+            // cfg (live.cfg, cvars del match) la pise.
+            string timeoutTime = $"mp_team_timeout_time {pauseDuration.Value}";
+            if (player.TeamNum == 2)
+            {
+                if (gameRules.TerroristTimeOuts > 0)
                 {
-                    // ReplyToUserCommand(player, "Match is already paused, cannot start a tactical timeout!");
-                    ReplyToUserCommand(player, Localizer["matchzy.cc.matchpaused"]);
-                    return;
+                    Server.ExecuteCommand($"{timeoutTime}; timeout_terrorist_start");
                 }
-                var gameRules = Utilities.FindAllEntitiesByDesignerName<CCSGameRulesProxy>("cs_gamerules").First().GameRules!;
-                // La duración se fija justo antes de cada timeout para que ningún
-                // cfg (live.cfg, cvars del match) la pise.
-                string timeoutTime = $"mp_team_timeout_time {pauseDuration.Value}";
-                if (player.TeamNum == 2)
+                else
                 {
-                    if (gameRules.TerroristTimeOuts > 0)
-                    {
-                        Server.ExecuteCommand($"{timeoutTime}; timeout_terrorist_start");
-                    }
-                    else
-                    {
-                        // ReplyToUserCommand(player, "You do not have any tactical timeouts left!");
-                        ReplyToUserCommand(player, Localizer["matchzy.cc.nomorepauses"]);
-                    }
+                    // ReplyToUserCommand(player, "You do not have any tactical timeouts left!");
+                    ReplyToUserCommand(player, Localizer["matchzy.cc.nomorepauses"]);
                 }
-                else if (player.TeamNum == 3)
+            }
+            else
+            {
+                if (gameRules.CTTimeOuts > 0)
                 {
-                    if (gameRules.CTTimeOuts > 0)
-                    {
-                        Server.ExecuteCommand($"{timeoutTime}; timeout_ct_start");
-                    }
-                    else
-                    {
-                        // ReplyToUserCommand(player, "You do not have any tactical timeouts left!");
-                        ReplyToUserCommand(player, Localizer["matchzy.cc.nomorepauses"]);
-                    }
+                    Server.ExecuteCommand($"{timeoutTime}; timeout_ct_start");
+                }
+                else
+                {
+                    // ReplyToUserCommand(player, "You do not have any tactical timeouts left!");
+                    ReplyToUserCommand(player, Localizer["matchzy.cc.nomorepauses"]);
                 }
             }
         }
@@ -275,12 +286,12 @@ namespace MatchZy
         public void OnUnpauseCommand(CCSPlayerController? player, CommandInfo? command)
         {
             // Sin pausa de .tech/admin/restore, .unpause cancela el timeout táctico de .pause.
-            if (isMatchLive && !isPaused)
+            if (IsPausablePhase && !isPaused)
             {
                 CancelTacticalPause(player);
                 return;
             }
-            if (isMatchLive && isPaused)
+            if (IsPausablePhase && isPaused)
             {
                 var pauseTeamName = unpauseData["pauseTeam"];
                 if ((string)pauseTeamName == "Admin" && player != null)

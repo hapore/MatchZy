@@ -432,6 +432,10 @@ namespace MatchZy
                     finalEvent = 9;
                 }
                 @event.Reason = finalEvent;
+                // Pausa pedida con el cuchillo en juego: no hay otro freezetime
+                // de cuchillo donde aplicarla. Se suelta para que la elección de
+                // lado no quede pausada y se pide en la primera ronda en vivo.
+                CarryPendingPauseToLive("la ronda de cuchillo");
                 isSideSelectionPhase = true;
                 isKnifeRound = false;
                 StartAfterKnifeWarmup();
