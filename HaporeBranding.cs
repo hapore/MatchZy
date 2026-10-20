@@ -23,12 +23,14 @@ namespace MatchZy
         // terminó el freezetime.
         private int haporeBrandingGeneration = 0;
 
-        // A la demo sólo llega lo que recibe el cliente de GOTV, y PrintToCenterHtml
-        // le manda el evento a un único jugador. Al slot de GOTV se le manda
-        // aparte; si el motor no le da un listener propio, se cae a difundir el
-        // evento a todos (con el userid de GOTV) para que igual quede grabado.
-        private bool haporeBrandingGotvBroadcast = false;
-        private bool haporeBrandingGotvPathLogged = false;
+        // A la demo sólo llega lo que se le manda directo al slot de GOTV
+        // (PrintToCenterHtml sobre su controller, con su userid). Difundir el
+        // evento a todos con FireEvent no queda grabado, ni con el userid de GOTV
+        // ni sin userid como en las demos de FACEIT: se probó con demos el
+        // 2026-10-20 y sólo aparecían los eventos del envío directo.
+        private CCSPlayerController? haporeBrandingGotv = null;
+        private string? haporeBrandingGotvLogState = null;
+        private bool haporeBrandingGotvSentLogged = false;
         private bool haporeBrandingErrorLogged = false;
 
         /// <summary>
@@ -61,6 +63,7 @@ namespace MatchZy
                     if (generation != haporeBrandingGeneration || !isMatchLive) return;
                     haporeBrandingHtml = html;
                     haporeBrandingErrorLogged = false;
+                    haporeBrandingGotv = FindGotvController();
                     haporeBrandingHideAtUtc = DateTime.UtcNow.AddSeconds(Math.Max(1, haporeBrandingSeconds.Value));
                 }, TimerFlags.STOP_ON_MAPCHANGE);
             });
@@ -110,19 +113,14 @@ namespace MatchZy
             for (int slot = 0; slot < Server.MaxPlayers; slot++)
             {
                 CCSPlayerController? player = Utilities.GetPlayerFromSlot(slot);
+                // GOTV también es FL_FAKECLIENT (IsBot); va aparte, abajo.
                 // Los bots no tienen listener de eventos: FireEventToClient tira.
-                if (player == null || !player.IsValid || player.IsBot) continue;
+                if (player == null || !player.IsValid || player.IsHLTV || player.IsBot) continue;
+                if (player.Connected != PlayerConnectedState.Connected) continue;
 
                 try
                 {
-                    if (player.IsHLTV)
-                    {
-                        SendHaporeBrandingToGotv(player);
-                    }
-                    else if (player.Connected == PlayerConnectedState.Connected)
-                    {
-                        player.PrintToCenterHtml(haporeBrandingHtml, HaporeBrandingEventDuration);
-                    }
+                    player.PrintToCenterHtml(haporeBrandingHtml, HaporeBrandingEventDuration);
                 }
                 catch (Exception e)
                 {
@@ -132,39 +130,57 @@ namespace MatchZy
                     LogInfo("Branding", $"No se pudo mostrar el banner a {player.PlayerName} (slot {slot}): {e.Message}");
                 }
             }
+
+            SendHaporeBrandingToGotv();
         }
 
-        private void SendHaporeBrandingToGotv(CCSPlayerController gotv)
+        private void SendHaporeBrandingToGotv()
         {
-            var @event = new EventShowSurvivalRespawnStatus(true)
-            {
-                LocToken = haporeBrandingHtml,
-                Duration = HaporeBrandingEventDuration,
-                Userid = gotv
-            };
+            CCSPlayerController? gotv = haporeBrandingGotv;
+            if (gotv == null || !gotv.IsValid) return;
 
-            if (!haporeBrandingGotvBroadcast)
+            try
             {
-                try
+                gotv.PrintToCenterHtml(haporeBrandingHtml, HaporeBrandingEventDuration);
+                if (!haporeBrandingGotvSentLogged)
                 {
-                    @event.FireEventToClient(gotv);
-                    @event.Free();
-                    if (!haporeBrandingGotvPathLogged)
-                    {
-                        haporeBrandingGotvPathLogged = true;
-                        LogInfo("Branding", $"Banner enviado directo a GOTV (slot {gotv.Slot}).");
-                    }
-                    return;
+                    haporeBrandingGotvSentLogged = true;
+                    LogInfo("Branding", $"Banner enviado a GOTV (slot {gotv.Slot}) para que quede en la demo.");
                 }
-                catch (Exception e)
+            }
+            catch (Exception e)
+            {
+                if (haporeBrandingErrorLogged) return;
+                haporeBrandingErrorLogged = true;
+                LogInfo("Branding", $"No se pudo mandar el banner a GOTV (slot {gotv.Slot}): {e.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Busca el controller de GOTV entre todos los controllers, no sólo en
+        /// los slots que recorre el tick. Loguea cuando cambia lo encontrado.
+        /// </summary>
+        private CCSPlayerController? FindGotvController()
+        {
+            CCSPlayerController? gotv = null;
+            foreach (var controller in Utilities.FindAllEntitiesByDesignerName<CCSPlayerController>("cs_player_controller"))
+            {
+                if (controller.IsValid && controller.IsHLTV)
                 {
-                    haporeBrandingGotvBroadcast = true;
-                    LogInfo("Branding", $"GOTV (slot {gotv.Slot}) no acepta eventos directos ({e.Message}); se difunde el evento a todos.");
+                    gotv = controller;
+                    break;
                 }
             }
 
-            // FireEvent libera el evento.
-            @event.FireEvent(false);
+            string state = gotv == null
+                ? $"sin controller de GOTV (IsHLTV) con MaxPlayers={Server.MaxPlayers}: el banner no va a quedar en la demo"
+                : $"GOTV en slot {gotv.Slot} ('{gotv.PlayerName}', IsBot={gotv.IsBot}, Connected={gotv.Connected}) con MaxPlayers={Server.MaxPlayers}";
+            if (state != haporeBrandingGotvLogState)
+            {
+                haporeBrandingGotvLogState = state;
+                LogInfo("Branding", state);
+            }
+            return gotv;
         }
     }
 }
