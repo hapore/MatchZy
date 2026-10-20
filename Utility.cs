@@ -2179,6 +2179,7 @@ namespace MatchZy
                 // Fallback para el round_time de los duelos; EventRoundFreezeEnd
                 // lo sobreescribe con el instante real en que la ronda pasa a live.
                 currentRoundLiveStartUtc = DateTime.UtcNow;
+                ShowHaporeBranding();
             }
         }
 

@@ -376,6 +376,7 @@ namespace MatchZy
                 // UpdatePlayersMap();
             });
             RegisterListener<Listeners.OnEntitySpawned>(OnEntitySpawnedHandler);
+            RegisterListener<Listeners.OnTick>(OnHaporeBrandingTick);
             RegisterEventHandler<EventPlayerTeam>((@event, info) =>
             {
                 CCSPlayerController? player = @event.Userid;

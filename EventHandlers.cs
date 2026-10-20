@@ -270,6 +270,8 @@ public partial class MatchZy
         try
         {
             if (!matchStarted) return HookResult.Continue;
+            // El banner de HAPORE es sólo para el freezetime.
+            HideHaporeBranding();
             // Base del round_time de los duelos: la ronda pasa a live aqui.
             currentRoundLiveStartUtc = DateTime.UtcNow;
             // Foto de quien arranca vivo, para los clutches. Va en freeze end y

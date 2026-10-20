@@ -42,6 +42,16 @@ namespace MatchZy
 
         public FakeConVar<int> sideSelectionTimeoutCvar = new("matchzy_side_selection_timeout", "Seconds the knife-round winner has to pick .stay or .switch before the plugin picks one at random and starts the match. 0 waits forever (legacy behaviour). Default: 60", 60);
 
+        public FakeConVar<bool> haporeBrandingEnabled = new("matchzy_hapore_branding_enabled", "Whether to show the HAPORE banner in the center of the screen at the start of each live round. It is also sent to GOTV so it is recorded in the demo. Default: true", true);
+
+        public FakeConVar<string> haporeBrandingImageUrl = new("matchzy_hapore_branding_image_url", "Public URL (http/https, PNG) of the HAPORE banner image. Bump the ?v= query whenever the image changes: CS2 clients cache each URL, failed downloads included. Set to \"\" to show matchzy_hapore_branding_text instead. Default: https://cs2.hapore.net/img/assets/logo/hapore-match-banner.png?v=3", "https://cs2.hapore.net/img/assets/logo/hapore-match-banner.png?v=3");
+
+        public FakeConVar<string> haporeBrandingText = new("matchzy_hapore_branding_text", "Text shown instead of the banner image when matchzy_hapore_branding_image_url is empty. Default: Esta partida fue jugada en HAPORE", "Esta partida fue jugada en HAPORE");
+
+        public FakeConVar<int> haporeBrandingDelay = new("matchzy_hapore_branding_delay", "Seconds to wait after the start of each live round before showing the HAPORE banner, as cs2-retakes-allocator does with its site announcement. Default: 1", 1);
+
+        public FakeConVar<int> haporeBrandingSeconds = new("matchzy_hapore_branding_seconds", "Seconds the HAPORE banner stays on screen once it appears (after matchzy_hapore_branding_delay). It is hidden earlier if the freezetime ends. Default: 6", 6);
+
         [ConsoleCommand("matchzy_whitelist_enabled_default", "Whether Whitelist is enabled by default or not. Default value: false")]
         public void MatchZyWLConvar(CCSPlayerController? player, CommandInfo command)
         {
